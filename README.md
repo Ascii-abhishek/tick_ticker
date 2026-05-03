@@ -39,6 +39,8 @@ tests/           Unit tests
 
 `data/clickhouse` is your local ClickHouse installation and data directory. It is intentionally ignored by Git and should not be edited by the application code.
 
+For the full runbook, see `app/docs/operations.md`.
+
 ## Setup
 
 Install dependencies:
@@ -78,6 +80,18 @@ Seed the default NIFTY mapping:
 uv run options-platform seed-nifty
 ```
 
+Seed all underlyings from `app/config/underlyings.yml`:
+
+```bash
+uv run options-platform seed-underlyings
+```
+
+Apply ClickHouse data-skipping indexes:
+
+```bash
+uv run options-platform apply-optimizations
+```
+
 ## Historical Ingestion
 
 Historical ingestion loops through:
@@ -105,6 +119,18 @@ uv run python scripts/run_historical.py \
   --to-date 2026-05-03
 ```
 
+You can also generate strikes around ATM using the configured `strike_step`:
+
+```bash
+uv run python scripts/run_historical.py \
+  --underlying NIFTY \
+  --expiries 2026-05-07 \
+  --spot-price 22482 \
+  --strike-window 5 \
+  --from-date 2026-05-01 \
+  --to-date 2026-05-03
+```
+
 ## Live Ingestion
 
 Live ingestion polls Breeze once per minute, fetches a short lookback window, and uses the same duplicate filter before insert.
@@ -117,6 +143,8 @@ uv run python scripts/run_live.py \
   --expiry 2026-05-07 \
   --strikes 22500,22550,22600
 ```
+
+For long-running live ingestion, use `tmux`, `launchd`, `systemd`, or another supervisor. Cron is better suited to historical backfill jobs that start and exit.
 
 Run one cycle:
 
@@ -152,7 +180,7 @@ ORDER BY datetime, strike_price, option_type;
 - Inserts are batched with `BATCH_SIZE`, defaulting to 1000 rows.
 - Breeze requests use retry with exponential backoff.
 - Breeze requests are rate limited with `BREEZE_MIN_REQUEST_INTERVAL_SECONDS`.
+- Scripts resolve Breeze `stock_code` from `underlying_mapping.breeze_symbol` and store `underlying_mapping.nse_symbol` in analytics tables.
 - Logs are structured JSON and include contract identifiers on failures.
 - The table schemas stay BI-friendly for future Metabase dashboards.
 - Airflow, Kafka, and materialized views are intentionally not included yet.
-

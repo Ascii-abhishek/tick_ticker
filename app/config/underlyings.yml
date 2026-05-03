@@ -1,0 +1,10 @@
+underlyings:
+  - underlying_id: 1
+    breeze_symbol: NIFTY
+    nse_symbol: NIFTY
+    display_name: Nifty 50
+    exchange: NFO
+    lot_size: 50
+    tick_size: 0.05
+    strike_step: 50
+

@@ -27,6 +27,7 @@ class HistoricalLoadRequest:
     start: datetime
     end: datetime
     exchange: str = DEFAULT_EXCHANGE
+    breeze_symbol: str | None = None
     interval: str = DEFAULT_INTERVAL
     option_types: tuple[str, ...] = OPTION_TYPES
     lot_size: int | None = None
@@ -67,6 +68,7 @@ class HistoricalLoader:
         self.insert_repository.insert_option_contracts(contracts)
 
         total_inserted = 0
+        stock_code = request.breeze_symbol or request.underlying
         for expiry in request.expiries:
             expiry_datetime = datetime.combine(expiry, time.min)
             for strike in request.strikes:
@@ -78,7 +80,7 @@ class HistoricalLoader:
                     ):
                         try:
                             payload = self.breeze_client.get_historical_options(
-                                underlying=request.underlying,
+                                underlying=stock_code,
                                 exchange=request.exchange,
                                 expiry_date=expiry_datetime,
                                 strike_price=strike,
@@ -100,9 +102,10 @@ class HistoricalLoader:
                             logger.info(
                                 "historical_chunk_loaded",
                                 extra={
-                                    "underlying": request.underlying,
-                                    "expiry_date": expiry.isoformat(),
-                                    "strike_price": strike,
+                                "underlying": request.underlying,
+                                "breeze_symbol": stock_code,
+                                "expiry_date": expiry.isoformat(),
+                                "strike_price": strike,
                                     "option_type": option_type,
                                     "from_date": chunk_start.isoformat(),
                                     "to_date": chunk_end.isoformat(),
@@ -114,9 +117,10 @@ class HistoricalLoader:
                             logger.exception(
                                 "historical_chunk_failed",
                                 extra={
-                                    "underlying": request.underlying,
-                                    "expiry_date": expiry.isoformat(),
-                                    "strike_price": strike,
+                                "underlying": request.underlying,
+                                "breeze_symbol": stock_code,
+                                "expiry_date": expiry.isoformat(),
+                                "strike_price": strike,
                                     "option_type": option_type,
                                     "from_date": chunk_start.isoformat(),
                                     "to_date": chunk_end.isoformat(),
@@ -124,4 +128,3 @@ class HistoricalLoader:
                                 },
                             )
         return total_inserted
-

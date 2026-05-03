@@ -26,6 +26,7 @@ class LiveIngestionRequest:
     expiry_date: date
     strikes: tuple[float, ...]
     exchange: str = DEFAULT_EXCHANGE
+    breeze_symbol: str | None = None
     interval: str = DEFAULT_INTERVAL
     option_types: tuple[str, ...] = OPTION_TYPES
     lookback_minutes: int = 3
@@ -66,12 +67,13 @@ class LiveIngestionRunner:
         start = end - timedelta(minutes=request.lookback_minutes)
         expiry_datetime = datetime.combine(request.expiry_date, time.min)
         total_inserted = 0
+        stock_code = request.breeze_symbol or request.underlying
 
         for strike in request.strikes:
             for option_type in request.option_types:
                 try:
                     payload = self.breeze_client.get_historical_options(
-                        underlying=request.underlying,
+                        underlying=stock_code,
                         exchange=request.exchange,
                         expiry_date=expiry_datetime,
                         strike_price=strike,
@@ -94,6 +96,7 @@ class LiveIngestionRunner:
                         "live_ingestion_contract_failed",
                         extra={
                             "underlying": request.underlying,
+                            "breeze_symbol": stock_code,
                             "expiry_date": request.expiry_date.isoformat(),
                             "strike_price": strike,
                             "option_type": option_type,
@@ -109,4 +112,3 @@ class LiveIngestionRunner:
 
         signal.signal(signal.SIGINT, handle_stop)
         signal.signal(signal.SIGTERM, handle_stop)
-
