@@ -1,0 +1,10 @@
+[project]
+name = "tick-ticker"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "breeze-connect>=1.0.69",
+    "dotenv>=0.9.9",
+]
