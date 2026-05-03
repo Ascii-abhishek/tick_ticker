@@ -39,7 +39,7 @@ tests/           Unit tests
 
 `data/clickhouse` is your local ClickHouse installation and data directory. It is intentionally ignored by Git and should not be edited by the application code.
 
-For the full runbook, see `app/docs/operations.md`.
+For the full runbook, see `app/docs/operations.md`. For storage schemas and ClickHouse rationale, see `app/docs/data_structure.md`.
 
 ## Setup
 

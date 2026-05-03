@@ -56,6 +56,10 @@ run_historical.py / run_live.py
 
 For example, if a future broker symbol differs from the NSE/internal symbol, put both in `underlyings.yml`. The ingestion scripts will call Breeze with `breeze_symbol` and store `nse_symbol`.
 
+## Data Structure
+
+The full ClickHouse table reference, DDL, table usage, and ClickHouse rationale live in `app/docs/data_structure.md`.
+
 ## Add A New Underlying
 
 Edit `app/config/underlyings.yml`:
@@ -203,4 +207,3 @@ underlying, expiry_date, strike_price, option_type, datetime
 - `apply-optimizations` adds ClickHouse data-skipping indexes for common ad hoc analytics filters without changing the base table schemas.
 - Breeze calls are retried with exponential backoff and rate limited by `BREEZE_MIN_REQUEST_INTERVAL_SECONDS`.
 - Historical requests are chunked by `HISTORICAL_CHUNK_DAYS` to avoid very large API calls.
-

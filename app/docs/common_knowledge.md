@@ -33,3 +33,13 @@ total_put_open_interest / total_call_open_interest
 
 It is stored in `options_snapshot.pcr` for BI-friendly queries.
 
+## Data Tables Quick Reference
+
+The platform uses four ClickHouse tables:
+
+- `underlying_mapping`: symbol and contract metadata for each underlying. This resolves broker-specific Breeze symbols to canonical stored symbols.
+- `option_contracts`: the option contract universe, keyed by underlying, expiry, strike, and CE/PE.
+- `options_ohlcv`: the main 1-minute candle fact table used for research, backtests, and dashboards.
+- `options_snapshot`: optional aggregate table for ATM strike, total call OI, total put OI, and PCR.
+
+Read `app/docs/data_structure.md` for the full table schemas, ClickHouse rationale, and operational flow.
