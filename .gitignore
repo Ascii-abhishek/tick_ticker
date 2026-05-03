@@ -8,3 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local ClickHouse data directory; do not version database files
+data/
+
+# BreezeConnect may create runtime logs at project root
+logs/

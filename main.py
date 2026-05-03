@@ -1,5 +1,4 @@
-def main():
-    print("Hello from tick-ticker!")
+from app.main import main
 
 
 if __name__ == "__main__":
