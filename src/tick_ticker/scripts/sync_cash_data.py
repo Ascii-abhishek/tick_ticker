@@ -1,0 +1,362 @@
+"""Sync one pending cash symbol from Breeze into local Parquet and Iceberg."""
+
+from __future__ import annotations
+
+import argparse
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Any
+
+from tick_ticker.config import Settings, get_settings
+from tick_ticker.db.models import EquitySymbolReference, MarketDataSyncCompletion, MarketDataSyncState
+from tick_ticker.db.repositories import EquitySymbolReferenceRepository, MarketDataSyncStateRepository
+from tick_ticker.services.cash_data import (
+    CashSyncManifest,
+    cash_local_path,
+    cash_manifest_path,
+    read_cash_row_count,
+    transform_cash_payload,
+    write_cash_parquet,
+)
+from tick_ticker.services.iceberg_catalog import IcebergMarketDataCatalog
+from tick_ticker.utils.datetime import breeze_datetime, iter_date_chunks, parse_date, utc_now
+from tick_ticker.utils.engines import create_breeze_client, create_d1_client
+from tick_ticker.utils.logging import configure_logging, get_logger
+
+logger = get_logger(__name__)
+
+
+def main() -> None:
+    args = parse_args()
+    settings = get_settings()
+    configure_logging(settings.log_level)
+
+    d1_client = create_d1_client(settings)
+    symbol_repo = EquitySymbolReferenceRepository(d1_client)
+    sync_repo = MarketDataSyncStateRepository(d1_client)
+    if args.ensure_sync_table:
+        sync_repo.ensure_table()
+
+    to_date = resolve_to_date(settings, args)
+    symbol = resolve_symbol(symbol_repo, sync_repo, args, to_date)
+    if symbol is None:
+        logger.info("no_pending_cash_symbols")
+        return
+
+    manifest_path = cash_manifest_path(settings.data_dir, symbol.nse_symbol)
+    existing_manifest = CashSyncManifest.load(manifest_path) if args.upload_only else None
+    sync_state = sync_repo.get_state(market_type="cash", nse_symbol=symbol.nse_symbol)
+    from_date = resolve_from_date(symbol, sync_state, settings, args)
+    if existing_manifest is not None and not args.from_date and settings.cash_sync_from_date is None:
+        from_date = existing_manifest.from_date
+    if existing_manifest is not None and not args.to_date and settings.cash_sync_to_date is None:
+        to_date = existing_manifest.to_date
+    if from_date > to_date:
+        logger.info("cash_symbol_already_synced symbol=%s synced_to=%s", symbol.nse_symbol, sync_state.to_date if sync_state else None)
+        return
+    validate_date_range(from_date, to_date, settings, args.allow_large_range)
+
+    local_only = args.fetch_only or args.local_only
+    manifest = load_or_create_manifest(
+        manifest_path=manifest_path,
+        symbol=symbol,
+        from_date=from_date,
+        to_date=to_date,
+        allow_range_reset=local_only,
+    )
+
+    if not local_only:
+        sync_repo.mark_started(
+            market_type="cash",
+            nse_symbol=symbol.nse_symbol,
+            from_date=from_date.isoformat(),
+            to_date=to_date.isoformat(),
+        )
+    try:
+        if not args.upload_only:
+            fetch_to_local_parquet(settings, symbol, from_date, to_date, manifest, manifest_path)
+        if not local_only:
+            upload_to_iceberg(settings, manifest, manifest_path)
+            sync_repo.mark_completed(
+                MarketDataSyncCompletion(
+                    market_type="cash",
+                    nse_symbol=symbol.nse_symbol,
+                    from_date=coverage_from_date(sync_state, from_date),
+                    to_date=to_date,
+                    row_count=manifest.row_count,
+                    local_path=str(settings.data_dir / "cash"),
+                    r2_prefix=f"{settings.iceberg_cash_namespace}.{settings.iceberg_cash_table}",
+                    completed_at=utc_now(),
+                )
+            )
+            logger.info("cash_sync_completed symbol=%s rows=%s", symbol.nse_symbol, manifest.row_count)
+        else:
+            logger.info("cash_local_download_completed symbol=%s rows=%s", symbol.nse_symbol, manifest.row_count)
+    except Exception as exc:
+        if not local_only:
+            sync_repo.mark_failed(market_type="cash", nse_symbol=symbol.nse_symbol, error=str(exc))
+        raise
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--nse-symbol", help="Sync one NSE symbol only. Example: RELIANCE.")
+    parser.add_argument("--from-date", help="Inclusive start date, YYYY-MM-DD. Defaults to CASH_SYNC_FROM_DATE or listing_date.")
+    parser.add_argument("--to-date", help="Inclusive end date, YYYY-MM-DD. Defaults to CASH_SYNC_TO_DATE or today.")
+    parser.add_argument("--fetch-only", action="store_true", help="Only fetch Breeze data into local Parquet.")
+    parser.add_argument("--local-only", action="store_true", help="Only download local Parquet; do not upload to Iceberg or update sync state.")
+    parser.add_argument("--upload-only", action="store_true", help="Only append existing local Parquet files to Iceberg and mark D1.")
+    parser.add_argument(
+        "--allow-large-range",
+        action="store_true",
+        help="Allow ranges larger than CASH_SYNC_MAX_DAYS_PER_RUN.",
+    )
+    parser.add_argument(
+        "--ensure-sync-table",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run idempotent CREATE TABLE statements for sync state before syncing.",
+    )
+    args = parser.parse_args()
+    if args.local_only and args.upload_only:
+        parser.error("--local-only cannot be used with --upload-only")
+    if args.fetch_only and args.upload_only:
+        parser.error("--fetch-only cannot be used with --upload-only")
+    return args
+
+
+def resolve_symbol(
+    symbol_repo: EquitySymbolReferenceRepository,
+    sync_repo: MarketDataSyncStateRepository,
+    args: argparse.Namespace,
+    to_date: date,
+) -> EquitySymbolReference | None:
+    """Resolve either an explicit NSE symbol or the next due cash symbol."""
+
+    if args.nse_symbol:
+        symbol = symbol_repo.get_by_nse_symbol(args.nse_symbol)
+        if symbol is None:
+            raise ValueError(f"NSE symbol not found in equity_symbol_reference: {args.nse_symbol}")
+        return symbol
+    return sync_repo.next_due_cash_symbol(target_to_date=to_date)
+
+
+def resolve_to_date(settings: Settings, args: argparse.Namespace) -> date:
+    """Resolve the inclusive end date."""
+
+    return parse_date(args.to_date) if args.to_date else settings.cash_sync_to_date or date.today()
+
+
+def resolve_from_date(
+    symbol: EquitySymbolReference,
+    sync_state: MarketDataSyncState | None,
+    settings: Settings,
+    args: argparse.Namespace,
+) -> date:
+    """Resolve the inclusive start date from args, env, sync state, or listing date."""
+
+    if args.from_date:
+        return parse_date(args.from_date)
+    if settings.cash_sync_from_date:
+        return settings.cash_sync_from_date
+
+    if sync_state and sync_state.status == "completed" and sync_state.to_date:
+        return sync_state.to_date + timedelta(days=1)
+    if sync_state and sync_state.status in {"in_progress", "failed"} and sync_state.from_date:
+        return sync_state.from_date
+
+    from_date = symbol.listing_date
+    if from_date is None:
+        raise ValueError(
+            f"No start date for {symbol.nse_symbol}; pass --from-date or set CASH_SYNC_FROM_DATE because listing_date is empty."
+        )
+    return from_date
+
+
+def coverage_from_date(sync_state: MarketDataSyncState | None, run_from_date: date) -> date:
+    """Keep completed state as total known coverage where possible."""
+
+    if sync_state and sync_state.status == "completed" and sync_state.from_date:
+        return min(sync_state.from_date, run_from_date)
+    return run_from_date
+
+
+def load_or_create_manifest(
+    *,
+    manifest_path: Path,
+    symbol: EquitySymbolReference,
+    from_date: date,
+    to_date: date,
+    allow_range_reset: bool,
+) -> CashSyncManifest:
+    """Load a same-range manifest or safely start a new range."""
+
+    manifest = CashSyncManifest.load(manifest_path)
+    if manifest is None:
+        manifest = CashSyncManifest(
+            nse_symbol=symbol.nse_symbol,
+            breeze_code=symbol.breeze_code,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        manifest.save(manifest_path)
+        return manifest
+
+    if manifest.from_date == from_date and manifest.to_date == to_date:
+        return manifest
+
+    fully_uploaded = bool(manifest.fetched_files) and set(manifest.fetched_files).issubset(set(manifest.uploaded_files))
+    if fully_uploaded or allow_range_reset:
+        manifest = CashSyncManifest(
+            nse_symbol=symbol.nse_symbol,
+            breeze_code=symbol.breeze_code,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        manifest.save(manifest_path)
+        return manifest
+
+    raise RuntimeError(
+        f"Existing manifest range is {manifest.from_date}..{manifest.to_date}, "
+        f"but requested {from_date}..{to_date}. Finish or remove {manifest_path} before changing ranges."
+    )
+
+
+def validate_date_range(from_date: date, to_date: date, settings: Settings, allow_large_range: bool) -> None:
+    if from_date > to_date:
+        raise ValueError(f"from-date {from_date} is after to-date {to_date}")
+
+    days = (to_date - from_date).days + 1
+    if not allow_large_range and days > settings.cash_sync_max_days_per_run:
+        raise ValueError(
+            f"Refusing to sync {days} days in one run. Set --allow-large-range or reduce the range; "
+            f"CASH_SYNC_MAX_DAYS_PER_RUN={settings.cash_sync_max_days_per_run}."
+        )
+
+
+def fetch_to_local_parquet(
+    settings: Settings,
+    symbol: EquitySymbolReference,
+    from_date: date,
+    to_date: date,
+    manifest: CashSyncManifest,
+    manifest_path: Path,
+) -> None:
+    breeze = create_breeze_client(settings)
+    fetched = set(manifest.fetched_files)
+
+    for chunk_start, chunk_end in iter_date_chunks(from_date, to_date, chunk_days=settings.cash_history_chunk_days):
+        local_path = cash_local_path(settings.data_dir, chunk_start, symbol.nse_symbol)
+        if str(local_path) in fetched or local_path.exists():
+            if str(local_path) not in fetched:
+                manifest.fetched_files.append(str(local_path))
+                manifest.save(manifest_path)
+            logger.info("cash_local_file_exists symbol=%s path=%s", symbol.nse_symbol, local_path)
+            continue
+
+        payload = breeze.get_historical_cash(
+            stock_code=symbol.breeze_code,
+            from_date=breeze_datetime(chunk_start),
+            to_date=breeze_datetime(chunk_end, end_of_day=True),
+            interval=settings.default_interval,
+            exchange_code=settings.cash_exchange_code,
+            product_type=settings.cash_product_type,
+        )
+        rows = transform_cash_payload(
+            payload,
+            nse_symbol=symbol.nse_symbol,
+            exchange_code=settings.cash_exchange_code,
+            product_type=settings.cash_product_type,
+        )
+        write_cash_parquet(rows, local_path)
+        manifest.fetched_files.append(str(local_path))
+        manifest.save(manifest_path)
+        logger.info("cash_local_file_written symbol=%s path=%s rows=%s", symbol.nse_symbol, local_path, len(rows))
+
+        if settings.cash_history_chunk_days != 1:
+            split_chunk_by_trade_date(settings, symbol, local_path, rows, manifest, manifest_path)
+
+
+def split_chunk_by_trade_date(
+    settings: Settings,
+    symbol: EquitySymbolReference,
+    chunk_path: Path,
+    rows: list[Any],
+    manifest: CashSyncManifest,
+    manifest_path: Path,
+) -> None:
+    """Keep local files date-partitioned if chunk size is raised above one day."""
+
+    rows_by_date: dict[date, list] = {}
+    for row in rows:
+        rows_by_date.setdefault(row.trade_date, []).append(row)
+
+    if len(rows_by_date) <= 1:
+        return
+
+    if str(chunk_path) in manifest.fetched_files:
+        manifest.fetched_files.remove(str(chunk_path))
+    chunk_path.unlink(missing_ok=True)
+
+    for trade_date, date_rows in sorted(rows_by_date.items()):
+        path = cash_local_path(settings.data_dir, trade_date, symbol.nse_symbol)
+        write_cash_parquet(date_rows, path)
+        if str(path) not in manifest.fetched_files:
+            manifest.fetched_files.append(str(path))
+    manifest.save(manifest_path)
+
+
+def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_path: Path) -> None:
+    iceberg = IcebergMarketDataCatalog(settings)
+    table_ids = iceberg.ensure_market_data_tables()
+    uploaded = set(manifest.uploaded_files)
+    cash_table_id = ".".join(table_ids["cash"])
+
+    for local_file in manifest.fetched_files:
+        local_path = Path(local_file)
+        if not local_path.exists():
+            raise FileNotFoundError(f"Manifest references missing file: {local_path}")
+        trade_date = date_from_cash_path(local_path)
+        if local_file in uploaded:
+            logger.info("cash_iceberg_file_already_appended symbol=%s table=%s path=%s", manifest.nse_symbol, cash_table_id, local_path)
+            continue
+
+        row_count = read_cash_row_count(local_path)
+        if row_count == 0:
+            logger.info("cash_empty_file_skipped_for_iceberg symbol=%s table=%s path=%s", manifest.nse_symbol, cash_table_id, local_path)
+            manifest.uploaded_files.append(local_file)
+            manifest.save(manifest_path)
+            continue
+
+        iceberg.append_parquet_file(
+            "cash",
+            local_path,
+            snapshot_properties={
+                "tick_ticker.nse_symbol": manifest.nse_symbol,
+                "tick_ticker.trade_date": trade_date.isoformat(),
+                "tick_ticker.source_path": str(local_path),
+            },
+        )
+        manifest.uploaded_files.append(local_file)
+        manifest.save(manifest_path)
+        logger.info(
+            "cash_iceberg_file_appended symbol=%s table=%s path=%s rows=%s",
+            manifest.nse_symbol,
+            cash_table_id,
+            local_path,
+            row_count,
+        )
+
+
+def date_from_cash_path(path: str | Path) -> date:
+    """Parse data/cash/YYYY/MM/DD/SYMBOL.parquet into a date."""
+
+    path = Path(path)
+    day = int(path.parent.name)
+    month = int(path.parent.parent.name)
+    year = int(path.parent.parent.parent.name)
+    return date(year, month, day)
+
+
+if __name__ == "__main__":
+    main()

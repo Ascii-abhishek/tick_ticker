@@ -1,186 +1,76 @@
-# Options Data Platform
+# Tick Ticker
 
-A quant-ready Python platform for ingesting, storing, and analyzing 1-minute options candles from the ICICI Breeze API into ClickHouse.
-
-The first target is NIFTY options, with the code organized so more underlyings, orchestration, Kafka, and BI tooling can be added later without rewriting the ingestion core.
-
-## Architecture
+Small Python sync scripts for market data. The first implemented path is cash OHLCV:
 
 ```text
-Breeze API
-   |
-   v
-app.ingestion.breeze_client
-   |
-   v
-app.ingestion.transformer
-   |
-   v
-app.db.repository.insert  ---> ClickHouse
-   |                               |
-   v                               v
-Historical loader / Live runner    Metabase / notebooks / analytics
+Cloudflare D1 equity_symbol_reference
+  -> ICICI Breeze historical v2
+  -> local Parquet: data/cash/YYYY/MM/DD/SYMBOL.parquet
+  -> Cloudflare R2 Data Catalog Iceberg table: cash.ohlcv
+  -> D1 market_data_sync_state status = completed
 ```
 
-## Project Layout
+The script ensures three Iceberg namespaces/tables exist in the configured R2 bucket:
 
-```text
-app/
-  config/        Pydantic settings and constants
-  db/            ClickHouse client, typed row models, repositories
-  ingestion/     Breeze wrapper, transformer, historical and live loaders
-  services/      Contract and symbol helpers
-  utils/         JSON logging, datetime helpers, retry decorator
-  docs/          Common options knowledge
-scripts/         CLI scripts for historical and live ingestion
-notebooks/       Analysis examples
-tests/           Unit tests
-```
+- `cash.ohlcv`
+- `options.ohlcv`
+- `future.ohlcv`
 
-`data/clickhouse` is your local ClickHouse installation and data directory. It is intentionally ignored by Git and should not be edited by the application code.
+Practical docs live in `docs/`:
 
-For the full runbook, see `app/docs/operations.md`. For storage schemas and ClickHouse rationale, see `app/docs/data_structure.md`.
+- `docs/credentials.md`
+- `docs/storage.md`
+- `docs/d1.md`
+- `docs/cash-sync.md`
 
 ## Setup
 
-Install dependencies:
-
 ```bash
 uv sync --dev
+cp .env.example .env
 ```
 
-Configure `.env`:
+Fill the Breeze, D1, and R2 values in `.env`. The default bucket is `market-data`, configurable via `R2_BUCKET_NAME`. Enable R2 Data Catalog on that bucket before upload runs.
 
-```env
-ENVIRONMENT=dev
-CLICKHOUSE_HOST=localhost
-CLICKHOUSE_PORT=8123
-CLICKHOUSE_USER=default
-CLICKHOUSE_PASSWORD=
-CLICKHOUSE_DATABASE=default
+## D1 Reference Table
 
-BREEZE_API_KEY=...
-BREEZE_API_SECRET=...
-BREEZE_SESSION_TOKEN=...
-
-BATCH_SIZE=1000
-STRIKE_STEP=50
-STRIKE_WINDOW=10
-```
-
-Check ClickHouse connectivity:
-
-```bash
-uv run options-platform healthcheck
-```
-
-Seed the default NIFTY mapping:
-
-```bash
-uv run options-platform seed-nifty
-```
-
-Seed all underlyings from `app/config/underlyings.yml`:
-
-```bash
-uv run options-platform seed-underlyings
-```
-
-Apply ClickHouse data-skipping indexes:
-
-```bash
-uv run options-platform apply-optimizations
-```
-
-## Historical Ingestion
-
-Historical ingestion loops through:
+The existing `equity_symbol_reference` table is expected to include:
 
 ```text
-underlying -> expiry -> strike -> CE/PE -> date chunks
+nse_symbol
+breeze_code
+nse_company_name
+listing_date
+isin
 ```
 
-Rows are transformed into the exact `options_ohlcv` schema and inserted in batches. Before inserting, the repository checks existing natural keys:
-
-```text
-underlying, expiry_date, strike_price, option_type, datetime
-```
-
-This makes reruns idempotent at the application layer even though the existing ClickHouse table uses plain `MergeTree`.
-
-Example:
+Apply the sync-state migration once:
 
 ```bash
-uv run python scripts/run_historical.py \
-  --underlying NIFTY \
-  --expiries 2026-05-07 \
-  --strikes 22500,22550,22600 \
-  --from-date 2026-05-01 \
-  --to-date 2026-05-03
+wrangler d1 execute "$D1_DATABASE_ID" --remote --file migrations/d1/001_market_data_sync_state.sql
 ```
 
-You can also generate strikes around ATM using the configured `strike_step`:
+The sync script also runs idempotent `CREATE TABLE` statements by default, so local/dev recovery is painless if the migration has not been applied yet.
+
+## Cash Sync
+
+Run the next pending symbol from D1:
 
 ```bash
-uv run python scripts/run_historical.py \
-  --underlying NIFTY \
-  --expiries 2026-05-07 \
-  --spot-price 22482 \
-  --strike-window 5 \
-  --from-date 2026-05-01 \
-  --to-date 2026-05-03
+uv run sync-cash-data --from-date 2026-01-01 --to-date 2026-01-31
 ```
 
-## Live Ingestion
-
-Live ingestion polls Breeze once per minute, fetches a short lookback window, and uses the same duplicate filter before insert.
-
-Run continuously:
+For safety, ranges longer than `CASH_SYNC_MAX_DAYS_PER_RUN` are rejected unless explicitly allowed:
 
 ```bash
-uv run python scripts/run_live.py \
-  --underlying NIFTY \
-  --expiry 2026-05-07 \
-  --strikes 22500,22550,22600
+uv run sync-cash-data --from-date 2020-01-01 --to-date 2026-06-24 --allow-large-range
 ```
 
-For long-running live ingestion, use `tmux`, `launchd`, `systemd`, or another supervisor. Cron is better suited to historical backfill jobs that start and exit.
-
-Run one cycle:
+Resumability:
 
 ```bash
-uv run python scripts/run_live.py \
-  --expiry 2026-05-07 \
-  --strikes 22500,22550,22600 \
-  --run-once
+uv run sync-cash-data --fetch-only --from-date 2026-01-01 --to-date 2026-01-31
+uv run sync-cash-data --upload-only --from-date 2026-01-01 --to-date 2026-01-31
 ```
 
-## Analytics
-
-Use `QueryRepository` for application reads, or query ClickHouse directly from notebooks. A starter notebook is available at `notebooks/options_analysis_sample.ipynb`.
-
-Example SQL:
-
-```sql
-SELECT
-    datetime,
-    strike_price,
-    option_type,
-    close,
-    volume,
-    open_interest
-FROM options_ohlcv
-WHERE underlying = 'NIFTY'
-  AND expiry_date = '2026-05-07'
-ORDER BY datetime, strike_price, option_type;
-```
-
-## Production Notes
-
-- Inserts are batched with `BATCH_SIZE`, defaulting to 1000 rows.
-- Breeze requests use retry with exponential backoff.
-- Breeze requests are rate limited with `BREEZE_MIN_REQUEST_INTERVAL_SECONDS`.
-- Scripts resolve Breeze `stock_code` from `underlying_mapping.breeze_symbol` and store `underlying_mapping.nse_symbol` in analytics tables.
-- Logs are structured JSON and include contract identifiers on failures.
-- The table schemas stay BI-friendly for future Metabase dashboards.
-- Airflow, Kafka, and materialized views are intentionally not included yet.
+Each symbol gets a manifest in `data/state/cash/SYMBOL.json`. If a run fails after some files are written or appended to Iceberg, rerun with the same date range and it resumes from the manifest.
