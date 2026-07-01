@@ -57,6 +57,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
     default_interval: str = "1minute"
+    cash_history_provider: Literal["breeze"] = "breeze"
     cash_exchange_code: str = "NSE"
     cash_product_type: str = "cash"
     cash_history_chunk_days: int = 1

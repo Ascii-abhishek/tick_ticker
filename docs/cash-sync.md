@@ -43,7 +43,7 @@ What the script does:
 - If `--nse-symbol` is not passed, reads first due cash symbol from D1.
 - Uses `--from-date` when passed.
 - If no `--from-date`, resumes from completed `to_date + 1`.
-- If no previous completed state exists, starts from `listing_date`.
+- If no previous completed state exists, starts from the later of `listing_date` and the provider-supported history start date.
 - Uses `--to-date` when passed.
 - If no `--to-date`, uses today.
 - Uses `breeze_code` only for the Breeze API request.
@@ -63,5 +63,6 @@ Resume behavior:
 Safety:
 
 - Default max range is `CASH_SYNC_MAX_DAYS_PER_RUN`.
+- Breeze cash history starts on `2016-01-01`, so default backfills do not request earlier dates.
 - Use `--allow-large-range` only for intentional backfills.
 - Breeze rate limit is handled by `BREEZE_MIN_REQUEST_INTERVAL_SECONDS`.

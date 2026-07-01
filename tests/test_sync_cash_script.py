@@ -41,6 +41,18 @@ def test_resolve_from_date_uses_listing_date_when_no_state() -> None:
     assert resolve_from_date(symbol, None, Settings(_env_file=None), Args()) == date(2020, 1, 1)
 
 
+def test_resolve_from_date_uses_provider_start_when_listing_is_older() -> None:
+    symbol = EquitySymbolReference(nse_symbol="RELIANCE", breeze_code="RELIND", listing_date=date(1995, 1, 1))
+
+    assert resolve_from_date(symbol, None, Settings(_env_file=None), Args()) == date(2016, 1, 1)
+
+
+def test_resolve_from_date_uses_listing_date_when_after_provider_start() -> None:
+    symbol = EquitySymbolReference(nse_symbol="RELIANCE", breeze_code="RELIND", listing_date=date(2018, 1, 1))
+
+    assert resolve_from_date(symbol, None, Settings(_env_file=None), Args()) == date(2018, 1, 1)
+
+
 def test_resolve_from_date_continues_after_completed_to_date() -> None:
     symbol = EquitySymbolReference(nse_symbol="RELIANCE", breeze_code="RELIND", listing_date=date(2020, 1, 1))
     state = MarketDataSyncState(
@@ -104,3 +116,63 @@ def test_manifest_resets_for_new_range_after_upload(tmp_path: Path) -> None:
     assert next_manifest.from_date == date(2026, 1, 2)
     assert next_manifest.to_date == date(2026, 1, 2)
     assert next_manifest.fetched_files == []
+
+
+def test_manifest_extends_partial_range_for_incremental_retry(tmp_path: Path) -> None:
+    symbol = EquitySymbolReference(nse_symbol="RELIANCE", breeze_code="RELIND", listing_date=date(2020, 1, 1))
+    manifest_path = tmp_path / "RELIANCE.json"
+    manifest = load_or_create_manifest(
+        manifest_path=manifest_path,
+        symbol=symbol,
+        from_date=date(2026, 1, 1),
+        to_date=date(2026, 1, 2),
+        allow_range_reset=False,
+    )
+    manifest.fetched_files = [
+        "data/cash/2026/01/01/RELIANCE.parquet",
+        "data/cash/2026/01/02/RELIANCE.parquet",
+    ]
+    manifest.uploaded_files = ["data/cash/2026/01/01/RELIANCE.parquet"]
+    manifest.save(manifest_path)
+
+    next_manifest = load_or_create_manifest(
+        manifest_path=manifest_path,
+        symbol=symbol,
+        from_date=date(2026, 1, 1),
+        to_date=date(2026, 1, 5),
+        allow_range_reset=False,
+    )
+
+    assert next_manifest.from_date == date(2026, 1, 1)
+    assert next_manifest.to_date == date(2026, 1, 5)
+    assert next_manifest.fetched_files == [
+        "data/cash/2026/01/01/RELIANCE.parquet",
+        "data/cash/2026/01/02/RELIANCE.parquet",
+    ]
+    assert next_manifest.uploaded_files == ["data/cash/2026/01/01/RELIANCE.parquet"]
+
+
+def test_manifest_extends_adjacent_incremental_range(tmp_path: Path) -> None:
+    symbol = EquitySymbolReference(nse_symbol="RELIANCE", breeze_code="RELIND", listing_date=date(2020, 1, 1))
+    manifest_path = tmp_path / "RELIANCE.json"
+    manifest = load_or_create_manifest(
+        manifest_path=manifest_path,
+        symbol=symbol,
+        from_date=date(2026, 1, 1),
+        to_date=date(2026, 1, 2),
+        allow_range_reset=False,
+    )
+    manifest.fetched_files = ["data/cash/2026/01/02/RELIANCE.parquet"]
+    manifest.save(manifest_path)
+
+    next_manifest = load_or_create_manifest(
+        manifest_path=manifest_path,
+        symbol=symbol,
+        from_date=date(2026, 1, 3),
+        to_date=date(2026, 1, 5),
+        allow_range_reset=False,
+    )
+
+    assert next_manifest.from_date == date(2026, 1, 1)
+    assert next_manifest.to_date == date(2026, 1, 5)
+    assert next_manifest.fetched_files == ["data/cash/2026/01/02/RELIANCE.parquet"]

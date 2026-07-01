@@ -18,6 +18,7 @@ from tick_ticker.services.cash_data import (
     transform_cash_payload,
     write_cash_parquet,
 )
+from tick_ticker.services.cash_history_provider import cash_provider_history_start_date
 from tick_ticker.services.iceberg_catalog import IcebergMarketDataCatalog
 from tick_ticker.utils.datetime import breeze_datetime, iter_date_chunks, parse_date, utc_now
 from tick_ticker.utils.engines import create_breeze_client, create_d1_client
@@ -101,7 +102,10 @@ def main() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nse-symbol", help="Sync one NSE symbol only. Example: RELIANCE.")
-    parser.add_argument("--from-date", help="Inclusive start date, YYYY-MM-DD. Defaults to CASH_SYNC_FROM_DATE or listing_date.")
+    parser.add_argument(
+        "--from-date",
+        help="Inclusive start date, YYYY-MM-DD. Defaults to CASH_SYNC_FROM_DATE or the provider-supported listing date.",
+    )
     parser.add_argument("--to-date", help="Inclusive end date, YYYY-MM-DD. Defaults to CASH_SYNC_TO_DATE or today.")
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch Breeze data into local Parquet.")
     parser.add_argument("--local-only", action="store_true", help="Only download local Parquet; do not upload to Iceberg or update sync state.")
@@ -153,7 +157,7 @@ def resolve_from_date(
     settings: Settings,
     args: argparse.Namespace,
 ) -> date:
-    """Resolve the inclusive start date from args, env, sync state, or listing date."""
+    """Resolve the inclusive start date from args, env, sync state, or default policy."""
 
     if args.from_date:
         return parse_date(args.from_date)
@@ -165,12 +169,22 @@ def resolve_from_date(
     if sync_state and sync_state.status in {"in_progress", "failed"} and sync_state.from_date:
         return sync_state.from_date
 
-    from_date = symbol.listing_date
-    if from_date is None:
+    return resolve_default_from_date(symbol, settings)
+
+
+def resolve_default_from_date(symbol: EquitySymbolReference, settings: Settings) -> date:
+    """Resolve the default start date supported by the current cash data provider."""
+
+    listing_date = symbol.listing_date
+    if listing_date is None:
         raise ValueError(
             f"No start date for {symbol.nse_symbol}; pass --from-date or set CASH_SYNC_FROM_DATE because listing_date is empty."
         )
-    return from_date
+
+    provider_start_date = cash_provider_history_start_date(settings.cash_history_provider)
+    if provider_start_date is None:
+        return listing_date
+    return max(listing_date, provider_start_date)
 
 
 def coverage_from_date(sync_state: MarketDataSyncState | None, run_from_date: date) -> date:
@@ -189,7 +203,7 @@ def load_or_create_manifest(
     to_date: date,
     allow_range_reset: bool,
 ) -> CashSyncManifest:
-    """Load a same-range manifest or safely start a new range."""
+    """Load a reusable manifest or safely start a new range."""
 
     manifest = CashSyncManifest.load(manifest_path)
     if manifest is None:
@@ -216,10 +230,22 @@ def load_or_create_manifest(
         manifest.save(manifest_path)
         return manifest
 
+    if ranges_touch_or_overlap(manifest.from_date, manifest.to_date, from_date, to_date):
+        manifest.from_date = min(manifest.from_date, from_date)
+        manifest.to_date = max(manifest.to_date, to_date)
+        manifest.save(manifest_path)
+        return manifest
+
     raise RuntimeError(
         f"Existing manifest range is {manifest.from_date}..{manifest.to_date}, "
         f"but requested {from_date}..{to_date}. Finish or remove {manifest_path} before changing ranges."
     )
+
+
+def ranges_touch_or_overlap(left_from: date, left_to: date, right_from: date, right_to: date) -> bool:
+    """Return true when two inclusive ranges can share one resumable manifest."""
+
+    return left_from <= right_to + timedelta(days=1) and right_from <= left_to + timedelta(days=1)
 
 
 def validate_date_range(from_date: date, to_date: date, settings: Settings, allow_large_range: bool) -> None:
