@@ -134,7 +134,9 @@ class CashSyncManifest(BaseModel):
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        tmp_path = path.with_name(f".{path.name}.tmp")
+        tmp_path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        tmp_path.replace(path)
 
     @classmethod
     def load(cls, path: Path) -> "CashSyncManifest | None":

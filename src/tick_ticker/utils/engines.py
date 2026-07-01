@@ -25,6 +25,7 @@ class BreezeClient:
         self.settings = settings or get_settings()
         self._client = BreezeConnect(api_key=self.settings.breeze_api_key)
         self._connected = False
+        self._connect_lock = threading.Lock()
         self._last_request_at = 0.0
         self._lock = threading.Lock()
 
@@ -33,13 +34,16 @@ class BreezeClient:
 
         if self._connected:
             return
-        if not all([self.settings.breeze_api_key, self.settings.breeze_api_secret, self.settings.breeze_session_token]):
-            raise ValueError("Set BREEZE_API_KEY, BREEZE_API_SECRET, and BREEZE_SESSION_TOKEN")
-        self._client.generate_session(
-            api_secret=self.settings.breeze_api_secret,
-            session_token=self.settings.breeze_session_token,
-        )
-        self._connected = True
+        with self._connect_lock:
+            if self._connected:
+                return
+            if not all([self.settings.breeze_api_key, self.settings.breeze_api_secret, self.settings.breeze_session_token]):
+                raise ValueError("Set BREEZE_API_KEY, BREEZE_API_SECRET, and BREEZE_SESSION_TOKEN")
+            self._client.generate_session(
+                api_secret=self.settings.breeze_api_secret,
+                session_token=self.settings.breeze_session_token,
+            )
+            self._connected = True
 
     def get_historical_cash(
         self,

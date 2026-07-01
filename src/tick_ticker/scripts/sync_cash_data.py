@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,6 +29,33 @@ from tick_ticker.utils.engines import create_breeze_client, create_d1_client
 from tick_ticker.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class CashFetchResult:
+    """Outcome from fetching one date chunk."""
+
+    local_files: tuple[str, ...]
+    row_count: int
+    existed: bool
+
+
+@dataclass(frozen=True)
+class CashUploadTask:
+    """One local cash parquet file ready for Iceberg."""
+
+    local_file: str
+    local_path: Path
+    trade_date: date
+    row_count: int
+
+
+@dataclass(frozen=True)
+class CashUploadResult:
+    """Outcome from uploading one local cash parquet file."""
+
+    tasks: tuple[CashUploadTask, ...]
+    committed: bool
 
 
 def main() -> None:
@@ -56,6 +87,9 @@ def main() -> None:
         logger.info("cash_symbol_already_synced symbol=%s synced_to=%s", symbol.nse_symbol, sync_state.to_date if sync_state else None)
         return
     validate_date_range(from_date, to_date, settings, args.allow_large_range)
+    download_workers = resolve_worker_count(args.download_workers, settings.cash_download_workers, "download-workers")
+    upload_workers = resolve_worker_count(args.upload_workers, settings.cash_upload_workers, "upload-workers")
+    upload_batch_size = resolve_worker_count(None, settings.cash_upload_batch_size, "upload-batch-size")
 
     local_only = args.fetch_only or args.local_only
     manifest = load_or_create_manifest(
@@ -75,9 +109,9 @@ def main() -> None:
         )
     try:
         if not args.upload_only:
-            fetch_to_local_parquet(settings, symbol, from_date, to_date, manifest, manifest_path)
+            fetch_to_local_parquet(settings, symbol, from_date, to_date, manifest, manifest_path, workers=download_workers)
         if not local_only:
-            upload_to_iceberg(settings, manifest, manifest_path)
+            upload_to_iceberg(settings, manifest, manifest_path, workers=upload_workers, batch_size=upload_batch_size)
             sync_repo.mark_completed(
                 MarketDataSyncCompletion(
                     market_type="cash",
@@ -109,11 +143,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--to-date", help="Inclusive end date, YYYY-MM-DD. Defaults to CASH_SYNC_TO_DATE or today.")
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch Breeze data into local Parquet.")
     parser.add_argument("--local-only", action="store_true", help="Only download local Parquet; do not upload to Iceberg or update sync state.")
-    parser.add_argument("--upload-only", action="store_true", help="Only append existing local Parquet files to Iceberg and mark D1.")
+    parser.add_argument("--upload-only", action="store_true", help="Only upload existing local Parquet files to Iceberg and mark D1.")
     parser.add_argument(
         "--allow-large-range",
         action="store_true",
         help="Allow ranges larger than CASH_SYNC_MAX_DAYS_PER_RUN.",
+    )
+    parser.add_argument(
+        "--download-workers",
+        type=int,
+        help="Concurrent Breeze download workers. Defaults to CASH_DOWNLOAD_WORKERS.",
+    )
+    parser.add_argument(
+        "--upload-workers",
+        type=int,
+        help="Concurrent Iceberg upload workers. Defaults to CASH_UPLOAD_WORKERS.",
     )
     parser.add_argument(
         "--ensure-sync-table",
@@ -127,6 +171,15 @@ def parse_args() -> argparse.Namespace:
     if args.fetch_only and args.upload_only:
         parser.error("--fetch-only cannot be used with --upload-only")
     return args
+
+
+def resolve_worker_count(cli_value: int | None, settings_value: int, label: str) -> int:
+    """Resolve and validate a bounded worker count."""
+
+    value = cli_value if cli_value is not None else settings_value
+    if value < 1:
+        raise ValueError(f"{label} must be >= 1")
+    return value
 
 
 def resolve_symbol(
@@ -267,76 +320,121 @@ def fetch_to_local_parquet(
     to_date: date,
     manifest: CashSyncManifest,
     manifest_path: Path,
+    *,
+    workers: int,
 ) -> None:
     breeze = create_breeze_client(settings)
     fetched = set(manifest.fetched_files)
+    chunks = list(iter_date_chunks(from_date, to_date, chunk_days=settings.cash_history_chunk_days))
 
-    for chunk_start, chunk_end in iter_date_chunks(from_date, to_date, chunk_days=settings.cash_history_chunk_days):
-        local_path = cash_local_path(settings.data_dir, chunk_start, symbol.nse_symbol)
-        if str(local_path) in fetched or local_path.exists():
-            if str(local_path) not in fetched:
-                manifest.fetched_files.append(str(local_path))
-                manifest.save(manifest_path)
-            logger.info("cash_local_file_exists symbol=%s path=%s", symbol.nse_symbol, local_path)
-            continue
+    if workers == 1:
+        for chunk_start, chunk_end in chunks:
+            result = fetch_cash_chunk(settings, breeze, symbol, chunk_start, chunk_end, fetched)
+            record_fetch_result(manifest, manifest_path, symbol, result)
+        return
 
-        payload = breeze.get_historical_cash(
-            stock_code=symbol.breeze_code,
-            from_date=breeze_datetime(chunk_start),
-            to_date=breeze_datetime(chunk_end, end_of_day=True),
-            interval=settings.default_interval,
-            exchange_code=settings.cash_exchange_code,
-            product_type=settings.cash_product_type,
-        )
-        rows = transform_cash_payload(
-            payload,
-            nse_symbol=symbol.nse_symbol,
-            exchange_code=settings.cash_exchange_code,
-            product_type=settings.cash_product_type,
-        )
-        write_cash_parquet(rows, local_path)
-        manifest.fetched_files.append(str(local_path))
-        manifest.save(manifest_path)
-        logger.info("cash_local_file_written symbol=%s path=%s rows=%s", symbol.nse_symbol, local_path, len(rows))
-
-        if settings.cash_history_chunk_days != 1:
-            split_chunk_by_trade_date(settings, symbol, local_path, rows, manifest, manifest_path)
+    errors: list[BaseException] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cash-download") as executor:
+        futures = [
+            executor.submit(fetch_cash_chunk, settings, breeze, symbol, chunk_start, chunk_end, fetched)
+            for chunk_start, chunk_end in chunks
+        ]
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+            except BaseException as exc:
+                errors.append(exc)
+                continue
+            record_fetch_result(manifest, manifest_path, symbol, result)
+    if errors:
+        raise errors[0]
 
 
-def split_chunk_by_trade_date(
+def fetch_cash_chunk(
+    settings: Settings,
+    breeze: Any,
+    symbol: EquitySymbolReference,
+    chunk_start: date,
+    chunk_end: date,
+    fetched: set[str],
+) -> CashFetchResult:
+    """Fetch one cash date chunk into local parquet."""
+
+    local_path = cash_local_path(settings.data_dir, chunk_start, symbol.nse_symbol)
+    if str(local_path) in fetched or local_path.exists():
+        return CashFetchResult(local_files=(str(local_path),), row_count=read_cash_row_count(local_path) if local_path.exists() else 0, existed=True)
+
+    payload = breeze.get_historical_cash(
+        stock_code=symbol.breeze_code,
+        from_date=breeze_datetime(chunk_start),
+        to_date=breeze_datetime(chunk_end, end_of_day=True),
+        interval=settings.default_interval,
+        exchange_code=settings.cash_exchange_code,
+        product_type=settings.cash_product_type,
+    )
+    rows = transform_cash_payload(
+        payload,
+        nse_symbol=symbol.nse_symbol,
+        exchange_code=settings.cash_exchange_code,
+        product_type=settings.cash_product_type,
+    )
+    local_files = write_cash_chunk_files(settings, symbol, local_path, rows)
+    return CashFetchResult(local_files=tuple(str(path) for path in local_files), row_count=len(rows), existed=False)
+
+
+def record_fetch_result(
+    manifest: CashSyncManifest,
+    manifest_path: Path,
+    symbol: EquitySymbolReference,
+    result: CashFetchResult,
+) -> None:
+    """Persist fetched paths from one chunk result."""
+
+    for local_file in result.local_files:
+        add_manifest_file(manifest.fetched_files, local_file)
+    manifest.save(manifest_path)
+    log_name = "cash_local_file_exists" if result.existed else "cash_local_file_written"
+    for local_file in result.local_files:
+        log = logger.debug if result.existed else logger.info
+        log("%s symbol=%s path=%s rows=%s", log_name, symbol.nse_symbol, local_file, result.row_count)
+
+
+def write_cash_chunk_files(
     settings: Settings,
     symbol: EquitySymbolReference,
     chunk_path: Path,
     rows: list[Any],
-    manifest: CashSyncManifest,
-    manifest_path: Path,
-) -> None:
+) -> list[Path]:
     """Keep local files date-partitioned if chunk size is raised above one day."""
+
+    write_cash_parquet(rows, chunk_path)
+    if settings.cash_history_chunk_days == 1:
+        return [chunk_path]
 
     rows_by_date: dict[date, list] = {}
     for row in rows:
         rows_by_date.setdefault(row.trade_date, []).append(row)
 
     if len(rows_by_date) <= 1:
-        return
+        return [chunk_path]
 
-    if str(chunk_path) in manifest.fetched_files:
-        manifest.fetched_files.remove(str(chunk_path))
     chunk_path.unlink(missing_ok=True)
+    local_files: list[Path] = []
 
     for trade_date, date_rows in sorted(rows_by_date.items()):
         path = cash_local_path(settings.data_dir, trade_date, symbol.nse_symbol)
         write_cash_parquet(date_rows, path)
-        if str(path) not in manifest.fetched_files:
-            manifest.fetched_files.append(str(path))
-    manifest.save(manifest_path)
+        local_files.append(path)
+    return local_files
 
 
-def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_path: Path) -> None:
+def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_path: Path, *, workers: int, batch_size: int) -> None:
     iceberg = IcebergMarketDataCatalog(settings)
     table_ids = iceberg.ensure_market_data_tables()
     uploaded = set(manifest.uploaded_files)
     cash_table_id = ".".join(table_ids["cash"])
+    upload_tasks: list[CashUploadTask] = []
+    committed_source_paths = iceberg.committed_source_paths("cash")
 
     for local_file in manifest.fetched_files:
         local_path = Path(local_file)
@@ -344,34 +442,113 @@ def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_p
             raise FileNotFoundError(f"Manifest references missing file: {local_path}")
         trade_date = date_from_cash_path(local_path)
         if local_file in uploaded:
-            logger.info("cash_iceberg_file_already_appended symbol=%s table=%s path=%s", manifest.nse_symbol, cash_table_id, local_path)
+            logger.debug("cash_iceberg_file_already_uploaded symbol=%s table=%s path=%s", manifest.nse_symbol, cash_table_id, local_path)
             continue
 
         row_count = read_cash_row_count(local_path)
         if row_count == 0:
-            logger.info("cash_empty_file_skipped_for_iceberg symbol=%s table=%s path=%s", manifest.nse_symbol, cash_table_id, local_path)
-            manifest.uploaded_files.append(local_file)
+            logger.debug("cash_empty_file_skipped_for_iceberg symbol=%s table=%s path=%s", manifest.nse_symbol, cash_table_id, local_path)
+            add_manifest_file(manifest.uploaded_files, local_file)
             manifest.save(manifest_path)
             continue
 
-        iceberg.append_parquet_file(
-            "cash",
-            local_path,
-            snapshot_properties={
-                "tick_ticker.nse_symbol": manifest.nse_symbol,
-                "tick_ticker.trade_date": trade_date.isoformat(),
-                "tick_ticker.source_path": str(local_path),
-            },
-        )
-        manifest.uploaded_files.append(local_file)
-        manifest.save(manifest_path)
-        logger.info(
-            "cash_iceberg_file_appended symbol=%s table=%s path=%s rows=%s",
-            manifest.nse_symbol,
-            cash_table_id,
-            local_path,
-            row_count,
-        )
+        if local_file in committed_source_paths:
+            record_upload_result(
+                manifest,
+                manifest_path,
+                cash_table_id,
+                CashUploadResult(tasks=(CashUploadTask(local_file=local_file, local_path=local_path, trade_date=trade_date, row_count=row_count),), committed=False),
+            )
+            continue
+
+        upload_tasks.append(CashUploadTask(local_file=local_file, local_path=local_path, trade_date=trade_date, row_count=row_count))
+
+    upload_batches = list(chunk_upload_tasks(upload_tasks, batch_size))
+    if workers == 1:
+        for tasks in upload_batches:
+            result = upload_cash_tasks(settings, iceberg, manifest.nse_symbol, tasks)
+            record_upload_result(manifest, manifest_path, cash_table_id, result)
+        return
+
+    errors: list[BaseException] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cash-upload") as executor:
+        futures = [executor.submit(upload_cash_tasks, settings, iceberg, manifest.nse_symbol, tasks) for tasks in upload_batches]
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+            except BaseException as exc:
+                errors.append(exc)
+                continue
+            record_upload_result(manifest, manifest_path, cash_table_id, result)
+    if errors:
+        raise errors[0]
+
+
+def upload_cash_tasks(
+    settings: Settings,
+    iceberg: IcebergMarketDataCatalog,
+    nse_symbol: str,
+    tasks: tuple[CashUploadTask, ...],
+) -> CashUploadResult:
+    """Append cash files in one snapshot, retrying transient catalog conflicts."""
+
+    for attempt in range(1, settings.cash_upload_retry_attempts + 1):
+        try:
+            iceberg.append_parquet_files(
+                "cash",
+                [task.local_path for task in tasks],
+                snapshot_properties={
+                    "tick_ticker.nse_symbol": nse_symbol,
+                    "tick_ticker.trade_date_from": min(task.trade_date for task in tasks).isoformat(),
+                    "tick_ticker.trade_date_to": max(task.trade_date for task in tasks).isoformat(),
+                    "tick_ticker.source_paths": json.dumps([task.local_file for task in tasks], separators=(",", ":")),
+                    "tick_ticker.write_mode": "append",
+                },
+            )
+            return CashUploadResult(tasks=tasks, committed=True)
+        except Exception:
+            if attempt >= settings.cash_upload_retry_attempts:
+                raise
+            time.sleep(settings.cash_upload_retry_base_delay_seconds * attempt)
+    return CashUploadResult(tasks=tasks, committed=False)
+
+
+def record_upload_result(
+    manifest: CashSyncManifest,
+    manifest_path: Path,
+    cash_table_id: str,
+    result: CashUploadResult,
+) -> None:
+    """Persist a successful Iceberg upload in the manifest."""
+
+    for task in result.tasks:
+        add_manifest_file(manifest.uploaded_files, task.local_file)
+    manifest.save(manifest_path)
+    log_name = "cash_iceberg_batch_appended" if result.committed else "cash_iceberg_file_already_committed"
+    log = logger.info if result.committed else logger.debug
+    row_count = sum(task.row_count for task in result.tasks)
+    log(
+        "%s symbol=%s table=%s files=%s rows=%s",
+        log_name,
+        manifest.nse_symbol,
+        cash_table_id,
+        len(result.tasks),
+        row_count,
+    )
+
+
+def chunk_upload_tasks(tasks: list[CashUploadTask], batch_size: int) -> list[tuple[CashUploadTask, ...]]:
+    """Split upload tasks into stable batches."""
+
+    return [tuple(tasks[index : index + batch_size]) for index in range(0, len(tasks), batch_size)]
+
+
+def add_manifest_file(files: list[str], path: str) -> None:
+    """Add one manifest path in stable order."""
+
+    if path not in files:
+        files.append(path)
+        files.sort()
 
 
 def date_from_cash_path(path: str | Path) -> date:

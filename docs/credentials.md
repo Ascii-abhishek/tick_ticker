@@ -22,6 +22,11 @@ Operational settings:
 - `CASH_EXCHANGE_CODE`: Cash exchange. Default: `NSE`.
 - `CASH_PRODUCT_TYPE`: Breeze product type. Default: `cash`.
 - `CASH_HISTORY_CHUNK_DAYS`: Fetch chunk size. Default: `1`.
+- `CASH_DOWNLOAD_WORKERS`: Concurrent Breeze download workers. Default: `1`.
+- `CASH_UPLOAD_WORKERS`: Concurrent Iceberg upload workers. Default: `1`.
+- `CASH_UPLOAD_BATCH_SIZE`: Local parquet files per Iceberg upload commit. Default: `25`.
+- `CASH_UPLOAD_RETRY_ATTEMPTS`: Iceberg upload retry attempts. Default: `3`.
+- `CASH_UPLOAD_RETRY_BASE_DELAY_SECONDS`: Base delay between Iceberg upload retries. Default: `1.0`.
 - `CASH_SYNC_MAX_DAYS_PER_RUN`: Safety limit for one run. Default: `30`.
 - `CASH_SYNC_FROM_DATE`: Optional default start date.
 - `CASH_SYNC_TO_DATE`: Optional default end date.

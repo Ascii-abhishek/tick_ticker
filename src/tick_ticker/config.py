@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     cash_exchange_code: str = "NSE"
     cash_product_type: str = "cash"
     cash_history_chunk_days: int = 1
+    cash_download_workers: int = 1
+    cash_upload_workers: int = 1
+    cash_upload_batch_size: int = 25
+    cash_upload_retry_attempts: int = 3
+    cash_upload_retry_base_delay_seconds: float = 1.0
     cash_sync_max_days_per_run: int = 30
     cash_sync_from_date: date | None = None
     cash_sync_to_date: date | None = None
