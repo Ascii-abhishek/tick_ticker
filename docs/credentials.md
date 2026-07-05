@@ -19,9 +19,12 @@ Operational settings:
 
 - `DATA_DIR`: Local staging directory. Default: `data`.
 - `DEFAULT_INTERVAL`: Breeze candle interval. Default: `1minute`.
+- `BREEZE_MIN_REQUEST_INTERVAL_SECONDS`: Process-wide minimum delay between Breeze API calls. Default: `0.65`.
+- `BREEZE_MAX_REQUESTS_PER_RUN`: Historical Breeze requests the sync may reserve in one run. Default: `4500`; use `0` to disable.
 - `CASH_EXCHANGE_CODE`: Cash exchange. Default: `NSE`.
 - `CASH_PRODUCT_TYPE`: Breeze product type. Default: `cash`.
 - `CASH_HISTORY_CHUNK_DAYS`: Fetch chunk size. Default: `1`.
+- `CASH_SYMBOL_WORKERS`: Concurrent symbols for `sync-cash-data --all`. Default: `1`.
 - `CASH_DOWNLOAD_WORKERS`: Concurrent Breeze download workers. Default: `1`.
 - `CASH_UPLOAD_WORKERS`: Concurrent Iceberg upload workers. Default: `1`.
 - `CASH_UPLOAD_BATCH_SIZE`: Local parquet files per Iceberg upload commit. Default: `25`.

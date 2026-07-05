@@ -6,6 +6,20 @@ Run next pending cash symbol:
 uv run sync-cash-data --from-date 2026-01-01 --to-date 2026-01-31
 ```
 
+Run every pending or stale cash symbol:
+
+```bash
+uv run sync-cash-data --all
+```
+
+Run recent catch-up across many symbols:
+
+```bash
+uv run sync-cash-data --all --from-date 2026-07-01 --to-date 2026-07-05 --symbol-workers 20 --download-workers 1 --upload-workers 1
+```
+
+`--symbol-workers` parallelizes symbols. `--download-workers` parallelizes date chunks inside one symbol, so keep it low when symbol workers are high. When `--all` finds a symbol whose date range is larger than `CASH_SYNC_MAX_DAYS_PER_RUN`, it logs a skip and continues with the next symbol. Pass `--allow-large-range` only when you intentionally want those large backfills.
+
 Run one NSE symbol:
 
 ```bash
@@ -40,7 +54,9 @@ What the script does:
 
 - Ensures `market_data_sync_state` exists.
 - If `--nse-symbol` is passed, reads that symbol from `equity_symbol_reference`.
-- If `--nse-symbol` is not passed, reads first due cash symbol from D1.
+- If `--all` is passed, reads every due cash symbol from D1 and processes them with up to `CASH_SYMBOL_WORKERS` workers.
+- If neither `--nse-symbol` nor `--all` is passed, reads first due cash symbol from D1.
+- A completed symbol is due again when its `to_date` is older than the requested `--to-date`, or older than today when `--to-date` is omitted.
 - Uses `--from-date` when passed.
 - If no `--from-date`, resumes from completed `to_date + 1`.
 - If no previous completed state exists, starts from the later of `listing_date` and the provider-supported history start date.
@@ -65,7 +81,11 @@ Resume behavior:
 Safety:
 
 - Default max range is `CASH_SYNC_MAX_DAYS_PER_RUN`.
+- `--all` skips oversized ranges and continues unless `--allow-large-range` is passed.
 - Breeze cash history starts on `2016-01-01`, so default backfills do not request earlier dates.
 - Use `--allow-large-range` only for intentional backfills.
-- Breeze rate limit is handled by `BREEZE_MIN_REQUEST_INTERVAL_SECONDS`.
+- Breeze lists a 100 calls/minute and 5000 calls/day API limit; historical v2 returns at most 1000 candles per request.
+- Breeze rate limiting is process-wide and handled by `BREEZE_MIN_REQUEST_INTERVAL_SECONDS`. The default `0.65` seconds stays under 100 calls/minute.
+- `BREEZE_MAX_REQUESTS_PER_RUN` defaults to `4500` historical requests to leave room for session/login and other API calls. Set `--breeze-max-requests 0` only when you intentionally manage the daily limit outside this script.
+- Use `--symbol-workers 20` or `--symbol-workers 30` for short recent ranges. Avoid combining high symbol workers with high `--download-workers`.
 - Use `--download-workers` and `--upload-workers` carefully; both default to `1`.

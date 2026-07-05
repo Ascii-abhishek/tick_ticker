@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     breeze_api_secret: str = Field(default="")
     breeze_session_token: str = Field(default="")
     breeze_min_request_interval_seconds: float = 0.65
+    breeze_max_requests_per_run: int = 4500
     breeze_request_retry_attempts: int = 3
     breeze_request_retry_base_delay_seconds: float = 1.0
 
@@ -61,6 +62,7 @@ class Settings(BaseSettings):
     cash_exchange_code: str = "NSE"
     cash_product_type: str = "cash"
     cash_history_chunk_days: int = 1
+    cash_symbol_workers: int = 1
     cash_download_workers: int = 1
     cash_upload_workers: int = 1
     cash_upload_batch_size: int = 25

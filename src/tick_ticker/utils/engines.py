@@ -19,6 +19,9 @@ from tick_ticker.utils.retry import retry
 class BreezeClient:
     """Thin, rate-limited wrapper around BreezeConnect."""
 
+    _rate_limit_lock = threading.Lock()
+    _last_request_at = 0.0
+
     def __init__(self, settings: Settings | None = None) -> None:
         from breeze_connect import BreezeConnect
 
@@ -26,8 +29,6 @@ class BreezeClient:
         self._client = BreezeConnect(api_key=self.settings.breeze_api_key)
         self._connected = False
         self._connect_lock = threading.Lock()
-        self._last_request_at = 0.0
-        self._lock = threading.Lock()
 
     def connect(self) -> None:
         """Generate a Breeze session once."""
@@ -39,6 +40,7 @@ class BreezeClient:
                 return
             if not all([self.settings.breeze_api_key, self.settings.breeze_api_secret, self.settings.breeze_session_token]):
                 raise ValueError("Set BREEZE_API_KEY, BREEZE_API_SECRET, and BREEZE_SESSION_TOKEN")
+            self._rate_limit()
             self._client.generate_session(
                 api_secret=self.settings.breeze_api_secret,
                 session_token=self.settings.breeze_session_token,
@@ -87,12 +89,12 @@ class BreezeClient:
         return response
 
     def _rate_limit(self) -> None:
-        with self._lock:
-            elapsed = time.monotonic() - self._last_request_at
+        with self._rate_limit_lock:
+            elapsed = time.monotonic() - self.__class__._last_request_at
             wait_seconds = self.settings.breeze_min_request_interval_seconds - elapsed
             if wait_seconds > 0:
                 time.sleep(wait_seconds)
-            self._last_request_at = time.monotonic()
+            self.__class__._last_request_at = time.monotonic()
 
 
 class D1Client:

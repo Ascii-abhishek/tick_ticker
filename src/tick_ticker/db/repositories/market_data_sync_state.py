@@ -71,11 +71,10 @@ class MarketDataSyncStateRepository:
             return None
         return MarketDataSyncState.model_validate(rows[0])
 
-    def next_due_cash_symbol(self, *, target_to_date: date) -> EquitySymbolReference | None:
-        """Return the next cash symbol needing work through target_to_date."""
+    def due_cash_symbols(self, *, target_to_date: date, limit: int | None = None) -> list[EquitySymbolReference]:
+        """Return cash symbols needing work through target_to_date."""
 
-        rows = self.client.query(
-            """
+        sql = """
             SELECT
                 refs.nse_symbol,
                 refs.breeze_code,
@@ -92,13 +91,25 @@ class MarketDataSyncStateRepository:
                 OR state.to_date IS NULL
                 OR state.to_date < ?
             ORDER BY refs.nse_symbol
-            LIMIT 1
-            """,
-            [target_to_date.isoformat()],
+        """
+        params: list[str | int] = [target_to_date.isoformat()]
+        if limit is not None:
+            sql += "\n            LIMIT ?"
+            params.append(limit)
+
+        rows = self.client.query(
+            sql,
+            params,
         )
+        return [EquitySymbolReference.model_validate(row) for row in rows]
+
+    def next_due_cash_symbol(self, *, target_to_date: date) -> EquitySymbolReference | None:
+        """Return the next cash symbol needing work through target_to_date."""
+
+        rows = self.due_cash_symbols(target_to_date=target_to_date, limit=1)
         if not rows:
             return None
-        return EquitySymbolReference.model_validate(rows[0])
+        return rows[0]
 
     def mark_started(self, *, market_type: str, nse_symbol: str, from_date: str, to_date: str) -> None:
         """Upsert in-progress state."""

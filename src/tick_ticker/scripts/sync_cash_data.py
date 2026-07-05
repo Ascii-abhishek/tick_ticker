@@ -1,9 +1,10 @@
-"""Sync one pending cash symbol from Breeze into local Parquet and Iceberg."""
+"""Sync pending cash symbols from Breeze into local Parquet and Iceberg."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -58,6 +59,40 @@ class CashUploadResult:
     committed: bool
 
 
+class DateRangeTooLargeError(ValueError):
+    """Raised when a requested sync range exceeds the configured safety limit."""
+
+
+class BreezeRequestBudgetExceededError(RuntimeError):
+    """Raised when a run would exceed the configured Breeze request budget."""
+
+
+class BreezeRequestBudget:
+    """Thread-safe counter for Breeze historical requests reserved by one run."""
+
+    def __init__(self, max_requests: int) -> None:
+        self.max_requests = max_requests
+        self._reserved_requests = 0
+        self._lock = threading.Lock()
+
+    @property
+    def reserved_requests(self) -> int:
+        return self._reserved_requests
+
+    def reserve(self, *, symbol: str, requests: int) -> None:
+        if requests <= 0 or self.max_requests <= 0:
+            return
+        with self._lock:
+            next_total = self._reserved_requests + requests
+            if next_total > self.max_requests:
+                raise BreezeRequestBudgetExceededError(
+                    f"Refusing to reserve {requests} Breeze requests for {symbol}; "
+                    f"run budget would become {next_total}/{self.max_requests}. "
+                    "Raise BREEZE_MAX_REQUESTS_PER_RUN or reduce the symbol/date range."
+                )
+            self._reserved_requests = next_total
+
+
 def main() -> None:
     args = parse_args()
     settings = get_settings()
@@ -70,10 +105,160 @@ def main() -> None:
         sync_repo.ensure_table()
 
     to_date = resolve_to_date(settings, args)
-    symbol = resolve_symbol(symbol_repo, sync_repo, args, to_date)
-    if symbol is None:
+    download_workers = resolve_worker_count(args.download_workers, settings.cash_download_workers, "download-workers")
+    upload_workers = resolve_worker_count(args.upload_workers, settings.cash_upload_workers, "upload-workers")
+    upload_batch_size = resolve_worker_count(None, settings.cash_upload_batch_size, "upload-batch-size")
+    symbol_workers = resolve_worker_count(args.symbol_workers, settings.cash_symbol_workers, "symbol-workers")
+    breeze_request_budget = BreezeRequestBudget(
+        resolve_non_negative_count(args.breeze_max_requests, settings.breeze_max_requests_per_run, "breeze-max-requests")
+    )
+
+    symbols = resolve_symbols(symbol_repo, sync_repo, args, to_date)
+    if not symbols:
         logger.info("no_pending_cash_symbols")
         return
+
+    synced_count, skipped_count = sync_resolved_symbols(
+        settings=settings,
+        sync_repo=sync_repo,
+        symbols=symbols,
+        args=args,
+        to_date=to_date,
+        download_workers=download_workers,
+        upload_workers=upload_workers,
+        upload_batch_size=upload_batch_size,
+        symbol_workers=symbol_workers,
+        breeze_request_budget=breeze_request_budget,
+    )
+
+    if args.all_symbols:
+        logger.info(
+            "cash_sync_all_completed symbols=%s synced=%s skipped=%s breeze_requests_reserved=%s breeze_request_budget=%s",
+            len(symbols),
+            synced_count,
+            skipped_count,
+            breeze_request_budget.reserved_requests,
+            breeze_request_budget.max_requests,
+        )
+
+
+def sync_resolved_symbols(
+    *,
+    settings: Settings,
+    sync_repo: MarketDataSyncStateRepository,
+    symbols: list[EquitySymbolReference],
+    args: argparse.Namespace,
+    to_date: date,
+    download_workers: int,
+    upload_workers: int,
+    upload_batch_size: int,
+    symbol_workers: int,
+    breeze_request_budget: BreezeRequestBudget | None,
+) -> tuple[int, int]:
+    """Sync resolved symbols and skip oversized ranges during all-symbol runs."""
+
+    synced_count = 0
+    skipped_count = 0
+
+    if symbol_workers == 1 or len(symbols) == 1:
+        for symbol in symbols:
+            synced, skipped = sync_resolved_symbol(
+                settings=settings,
+                sync_repo=sync_repo,
+                symbol=symbol,
+                args=args,
+                to_date=to_date,
+                download_workers=download_workers,
+                upload_workers=upload_workers,
+                upload_batch_size=upload_batch_size,
+                breeze_request_budget=breeze_request_budget,
+            )
+            if synced:
+                synced_count += 1
+            if skipped:
+                skipped_count += 1
+        return synced_count, skipped_count
+
+    errors: list[BaseException] = []
+    worker_count = min(symbol_workers, len(symbols))
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="cash-symbol") as executor:
+        futures = [
+            executor.submit(
+                sync_resolved_symbol,
+                settings=settings,
+                sync_repo=sync_repo,
+                symbol=symbol,
+                args=args,
+                to_date=to_date,
+                download_workers=download_workers,
+                upload_workers=upload_workers,
+                upload_batch_size=upload_batch_size,
+                breeze_request_budget=breeze_request_budget,
+            )
+            for symbol in symbols
+        ]
+        for future in as_completed(futures):
+            try:
+                synced, skipped = future.result()
+            except BaseException as exc:
+                errors.append(exc)
+                continue
+            if synced:
+                synced_count += 1
+            if skipped:
+                skipped_count += 1
+    if errors:
+        raise errors[0]
+    return synced_count, skipped_count
+
+
+def sync_resolved_symbol(
+    *,
+    settings: Settings,
+    sync_repo: MarketDataSyncStateRepository,
+    symbol: EquitySymbolReference,
+    args: argparse.Namespace,
+    to_date: date,
+    download_workers: int,
+    upload_workers: int,
+    upload_batch_size: int,
+    breeze_request_budget: BreezeRequestBudget | None,
+) -> tuple[bool, bool]:
+    """Sync one symbol and return (synced, skipped)."""
+
+    try:
+        synced = sync_cash_symbol(
+            settings=settings,
+            sync_repo=sync_repo,
+            symbol=symbol,
+            args=args,
+            to_date=to_date,
+            download_workers=download_workers,
+            upload_workers=upload_workers,
+            upload_batch_size=upload_batch_size,
+            breeze_request_budget=breeze_request_budget,
+        )
+    except (DateRangeTooLargeError, BreezeRequestBudgetExceededError) as exc:
+        if not args.all_symbols:
+            raise
+        logger.warning("cash_symbol_skipped symbol=%s error=%s", symbol.nse_symbol, exc)
+        return False, True
+    return synced, False
+
+
+def sync_cash_symbol(
+    *,
+    settings: Settings,
+    sync_repo: MarketDataSyncStateRepository,
+    symbol: EquitySymbolReference,
+    args: argparse.Namespace,
+    to_date: date,
+    download_workers: int,
+    upload_workers: int,
+    upload_batch_size: int,
+    breeze_request_budget: BreezeRequestBudget | None = None,
+) -> bool:
+    """Sync one resolved cash symbol."""
 
     manifest_path = cash_manifest_path(settings.data_dir, symbol.nse_symbol)
     existing_manifest = CashSyncManifest.load(manifest_path) if args.upload_only else None
@@ -85,11 +270,8 @@ def main() -> None:
         to_date = existing_manifest.to_date
     if from_date > to_date:
         logger.info("cash_symbol_already_synced symbol=%s synced_to=%s", symbol.nse_symbol, sync_state.to_date if sync_state else None)
-        return
+        return False
     validate_date_range(from_date, to_date, settings, args.allow_large_range)
-    download_workers = resolve_worker_count(args.download_workers, settings.cash_download_workers, "download-workers")
-    upload_workers = resolve_worker_count(args.upload_workers, settings.cash_upload_workers, "upload-workers")
-    upload_batch_size = resolve_worker_count(None, settings.cash_upload_batch_size, "upload-batch-size")
 
     local_only = args.fetch_only or args.local_only
     manifest = load_or_create_manifest(
@@ -99,6 +281,18 @@ def main() -> None:
         to_date=to_date,
         allow_range_reset=local_only,
     )
+
+    if not args.upload_only and breeze_request_budget is not None:
+        request_count = count_missing_fetch_requests(settings, symbol, from_date, to_date, manifest)
+        breeze_request_budget.reserve(symbol=symbol.nse_symbol, requests=request_count)
+        if request_count:
+            logger.info(
+                "cash_breeze_requests_reserved symbol=%s requests=%s reserved=%s budget=%s",
+                symbol.nse_symbol,
+                request_count,
+                breeze_request_budget.reserved_requests,
+                breeze_request_budget.max_requests,
+            )
 
     if not local_only:
         sync_repo.mark_started(
@@ -131,11 +325,18 @@ def main() -> None:
         if not local_only:
             sync_repo.mark_failed(market_type="cash", nse_symbol=symbol.nse_symbol, error=str(exc))
         raise
+    return True
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nse-symbol", help="Sync one NSE symbol only. Example: RELIANCE.")
+    parser.add_argument(
+        "--all",
+        dest="all_symbols",
+        action="store_true",
+        help="Sync every due cash symbol instead of stopping after the first one.",
+    )
     parser.add_argument(
         "--from-date",
         help="Inclusive start date, YYYY-MM-DD. Defaults to CASH_SYNC_FROM_DATE or the provider-supported listing date.",
@@ -155,9 +356,19 @@ def parse_args() -> argparse.Namespace:
         help="Concurrent Breeze download workers. Defaults to CASH_DOWNLOAD_WORKERS.",
     )
     parser.add_argument(
+        "--symbol-workers",
+        type=int,
+        help="Concurrent cash symbols to process for --all. Defaults to CASH_SYMBOL_WORKERS.",
+    )
+    parser.add_argument(
         "--upload-workers",
         type=int,
         help="Concurrent Iceberg upload workers. Defaults to CASH_UPLOAD_WORKERS.",
+    )
+    parser.add_argument(
+        "--breeze-max-requests",
+        type=int,
+        help="Maximum Breeze historical requests to reserve in this run. Defaults to BREEZE_MAX_REQUESTS_PER_RUN; 0 disables.",
     )
     parser.add_argument(
         "--ensure-sync-table",
@@ -170,6 +381,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--local-only cannot be used with --upload-only")
     if args.fetch_only and args.upload_only:
         parser.error("--fetch-only cannot be used with --upload-only")
+    if args.all_symbols and args.nse_symbol:
+        parser.error("--all cannot be used with --nse-symbol")
     return args
 
 
@@ -179,6 +392,15 @@ def resolve_worker_count(cli_value: int | None, settings_value: int, label: str)
     value = cli_value if cli_value is not None else settings_value
     if value < 1:
         raise ValueError(f"{label} must be >= 1")
+    return value
+
+
+def resolve_non_negative_count(cli_value: int | None, settings_value: int, label: str) -> int:
+    """Resolve and validate a non-negative numeric limit."""
+
+    value = cli_value if cli_value is not None else settings_value
+    if value < 0:
+        raise ValueError(f"{label} must be >= 0")
     return value
 
 
@@ -196,6 +418,21 @@ def resolve_symbol(
             raise ValueError(f"NSE symbol not found in equity_symbol_reference: {args.nse_symbol}")
         return symbol
     return sync_repo.next_due_cash_symbol(target_to_date=to_date)
+
+
+def resolve_symbols(
+    symbol_repo: EquitySymbolReferenceRepository,
+    sync_repo: MarketDataSyncStateRepository,
+    args: argparse.Namespace,
+    to_date: date,
+) -> list[EquitySymbolReference]:
+    """Resolve one explicit/next symbol, or all due cash symbols."""
+
+    if args.all_symbols:
+        return sync_repo.due_cash_symbols(target_to_date=to_date)
+
+    symbol = resolve_symbol(symbol_repo, sync_repo, args, to_date)
+    return [symbol] if symbol is not None else []
 
 
 def resolve_to_date(settings: Settings, args: argparse.Namespace) -> date:
@@ -307,10 +544,29 @@ def validate_date_range(from_date: date, to_date: date, settings: Settings, allo
 
     days = (to_date - from_date).days + 1
     if not allow_large_range and days > settings.cash_sync_max_days_per_run:
-        raise ValueError(
+        raise DateRangeTooLargeError(
             f"Refusing to sync {days} days in one run. Set --allow-large-range or reduce the range; "
             f"CASH_SYNC_MAX_DAYS_PER_RUN={settings.cash_sync_max_days_per_run}."
         )
+
+
+def count_missing_fetch_requests(
+    settings: Settings,
+    symbol: EquitySymbolReference,
+    from_date: date,
+    to_date: date,
+    manifest: CashSyncManifest,
+) -> int:
+    """Count Breeze requests needed after local manifest/file resumability checks."""
+
+    fetched = set(manifest.fetched_files)
+    requests = 0
+    for chunk_start, _chunk_end in iter_date_chunks(from_date, to_date, chunk_days=settings.cash_history_chunk_days):
+        local_path = cash_local_path(settings.data_dir, chunk_start, symbol.nse_symbol)
+        if str(local_path) in fetched or local_path.exists():
+            continue
+        requests += 1
+    return requests
 
 
 def fetch_to_local_parquet(
@@ -466,22 +722,51 @@ def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_p
     upload_batches = list(chunk_upload_tasks(upload_tasks, batch_size))
     if workers == 1:
         for tasks in upload_batches:
-            result = upload_cash_tasks(settings, iceberg, manifest.nse_symbol, tasks)
-            record_upload_result(manifest, manifest_path, cash_table_id, result)
+            results = upload_cash_task_batch(settings, iceberg, manifest.nse_symbol, tasks)
+            for result in results:
+                record_upload_result(manifest, manifest_path, cash_table_id, result)
         return
 
     errors: list[BaseException] = []
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cash-upload") as executor:
-        futures = [executor.submit(upload_cash_tasks, settings, iceberg, manifest.nse_symbol, tasks) for tasks in upload_batches]
+        futures = [executor.submit(upload_cash_task_batch, settings, iceberg, manifest.nse_symbol, tasks) for tasks in upload_batches]
         for future in as_completed(futures):
             try:
-                result = future.result()
+                results = future.result()
             except BaseException as exc:
                 errors.append(exc)
                 continue
-            record_upload_result(manifest, manifest_path, cash_table_id, result)
+            for result in results:
+                record_upload_result(manifest, manifest_path, cash_table_id, result)
     if errors:
         raise errors[0]
+
+
+def upload_cash_task_batch(
+    settings: Settings,
+    iceberg: IcebergMarketDataCatalog,
+    nse_symbol: str,
+    tasks: tuple[CashUploadTask, ...],
+) -> tuple[CashUploadResult, ...]:
+    """Append a batch, splitting it if R2/catalog writes keep failing."""
+
+    try:
+        return (upload_cash_tasks(settings, iceberg, nse_symbol, tasks),)
+    except Exception as exc:
+        if len(tasks) == 1:
+            raise
+        midpoint = len(tasks) // 2
+        logger.warning(
+            "cash_iceberg_batch_split_after_failure symbol=%s files=%s left=%s right=%s error=%s",
+            nse_symbol,
+            len(tasks),
+            midpoint,
+            len(tasks) - midpoint,
+            exc,
+        )
+        left_results = upload_cash_task_batch(settings, iceberg, nse_symbol, tasks[:midpoint])
+        right_results = upload_cash_task_batch(settings, iceberg, nse_symbol, tasks[midpoint:])
+        return left_results + right_results
 
 
 def upload_cash_tasks(
@@ -506,9 +791,17 @@ def upload_cash_tasks(
                 },
             )
             return CashUploadResult(tasks=tasks, committed=True)
-        except Exception:
+        except Exception as exc:
             if attempt >= settings.cash_upload_retry_attempts:
                 raise
+            logger.warning(
+                "cash_iceberg_batch_append_retrying symbol=%s files=%s attempt=%s/%s error=%s",
+                nse_symbol,
+                len(tasks),
+                attempt,
+                settings.cash_upload_retry_attempts,
+                exc,
+            )
             time.sleep(settings.cash_upload_retry_base_delay_seconds * attempt)
     return CashUploadResult(tasks=tasks, committed=False)
 
