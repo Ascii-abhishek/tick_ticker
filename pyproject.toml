@@ -15,7 +15,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "python-dotenv>=1.0.1",
     "polars>=1.40.1",
-    "pyiceberg>=0.11.1",
+    "pyiceberg[pyiceberg-core]>=0.11.1",
 ]
 
 [build-system]
@@ -24,6 +24,8 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 sync-cash-data = "tick_ticker.scripts.sync_cash_data:main"
+backfill-cash-symbol-iceberg = "tick_ticker.scripts.backfill_cash_symbol_iceberg:main"
+reconcile-cash-sync-state = "tick_ticker.scripts.reconcile_cash_sync_state:main"
 
 [dependency-groups]
 dev = [

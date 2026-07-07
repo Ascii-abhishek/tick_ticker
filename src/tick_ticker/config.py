@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     r2_data_catalog_uri: str = ""
     r2_data_catalog_warehouse: str = ""
     iceberg_cash_namespace: str = "cash"
-    iceberg_cash_table: str = "ohlcv"
+    iceberg_cash_table: str = "ohlcv_by_symbol"
     iceberg_options_namespace: str = "options"
     iceberg_options_table: str = "ohlcv"
     iceberg_future_namespace: str = "future"
@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     cash_download_workers: int = 1
     cash_upload_workers: int = 1
     cash_upload_batch_size: int = 25
+    cash_symbol_upload_workers: int = 4
+    cash_symbol_upload_batch_size: int = 500
     cash_upload_retry_attempts: int = 3
     cash_upload_retry_base_delay_seconds: float = 1.0
     cash_sync_max_days_per_run: int = 30

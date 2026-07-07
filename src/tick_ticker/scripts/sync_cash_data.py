@@ -30,6 +30,7 @@ from tick_ticker.utils.engines import create_breeze_client, create_d1_client
 from tick_ticker.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
+_CASH_ICEBERG_APPEND_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,16 @@ class CashUploadResult:
 
     tasks: tuple[CashUploadTask, ...]
     committed: bool
+
+
+@dataclass(frozen=True)
+class CashLocalCoverage:
+    """Local cash file coverage for one symbol."""
+
+    from_date: date | None
+    to_date: date | None
+    file_count: int
+    row_count: int
 
 
 class DateRangeTooLargeError(ValueError):
@@ -304,21 +315,36 @@ def sync_cash_symbol(
     try:
         if not args.upload_only:
             fetch_to_local_parquet(settings, symbol, from_date, to_date, manifest, manifest_path, workers=download_workers)
+            manifest.record_fetch_event(completed_at=utc_now())
+            manifest.save(manifest_path)
         if not local_only:
-            upload_to_iceberg(settings, manifest, manifest_path, workers=upload_workers, batch_size=upload_batch_size)
+            cash_table_id = upload_to_iceberg(settings, manifest, manifest_path, workers=upload_workers, batch_size=upload_batch_size)
+            local_coverage = cash_local_coverage(settings.data_dir, symbol.nse_symbol)
+            coverage_start = local_coverage.from_date or coverage_from_date(sync_state, from_date)
+            coverage_end = local_coverage.to_date if local_coverage.to_date and local_coverage.to_date > to_date else to_date
+            completed_at = utc_now()
+            manifest.record_upload_event(
+                table=cash_table_id,
+                coverage_from_date=coverage_start,
+                coverage_to_date=coverage_end,
+                coverage_file_count=local_coverage.file_count,
+                coverage_row_count=local_coverage.row_count,
+                completed_at=completed_at,
+            )
+            manifest.save(manifest_path)
             sync_repo.mark_completed(
                 MarketDataSyncCompletion(
                     market_type="cash",
                     nse_symbol=symbol.nse_symbol,
-                    from_date=coverage_from_date(sync_state, from_date),
-                    to_date=to_date,
-                    row_count=manifest.row_count,
+                    from_date=coverage_start,
+                    to_date=coverage_end,
+                    row_count=local_coverage.row_count,
                     local_path=str(settings.data_dir / "cash"),
-                    r2_prefix=f"{settings.iceberg_cash_namespace}.{settings.iceberg_cash_table}",
-                    completed_at=utc_now(),
+                    r2_prefix=cash_table_id,
+                    completed_at=completed_at,
                 )
             )
-            logger.info("cash_sync_completed symbol=%s rows=%s", symbol.nse_symbol, manifest.row_count)
+            logger.info("cash_sync_completed symbol=%s rows=%s", symbol.nse_symbol, local_coverage.row_count)
         else:
             logger.info("cash_local_download_completed symbol=%s rows=%s", symbol.nse_symbol, manifest.row_count)
     except Exception as exc:
@@ -511,12 +537,7 @@ def load_or_create_manifest(
 
     fully_uploaded = bool(manifest.fetched_files) and set(manifest.fetched_files).issubset(set(manifest.uploaded_files))
     if fully_uploaded or allow_range_reset:
-        manifest = CashSyncManifest(
-            nse_symbol=symbol.nse_symbol,
-            breeze_code=symbol.breeze_code,
-            from_date=from_date,
-            to_date=to_date,
-        )
+        manifest.begin_run(from_date, to_date, breeze_code=symbol.breeze_code)
         manifest.save(manifest_path)
         return manifest
 
@@ -684,7 +705,7 @@ def write_cash_chunk_files(
     return local_files
 
 
-def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_path: Path, *, workers: int, batch_size: int) -> None:
+def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_path: Path, *, workers: int, batch_size: int) -> str:
     iceberg = IcebergMarketDataCatalog(settings)
     table_ids = iceberg.ensure_market_data_tables()
     uploaded = set(manifest.uploaded_files)
@@ -722,14 +743,17 @@ def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_p
     upload_batches = list(chunk_upload_tasks(upload_tasks, batch_size))
     if workers == 1:
         for tasks in upload_batches:
-            results = upload_cash_task_batch(settings, iceberg, manifest.nse_symbol, tasks)
+            results = upload_cash_task_batch(settings, iceberg, "cash", manifest.nse_symbol, tasks)
             for result in results:
                 record_upload_result(manifest, manifest_path, cash_table_id, result)
-        return
+        return cash_table_id
 
     errors: list[BaseException] = []
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cash-upload") as executor:
-        futures = [executor.submit(upload_cash_task_batch, settings, iceberg, manifest.nse_symbol, tasks) for tasks in upload_batches]
+        futures = [
+            executor.submit(upload_cash_task_batch, settings, iceberg, "cash", manifest.nse_symbol, tasks)
+            for tasks in upload_batches
+        ]
         for future in as_completed(futures):
             try:
                 results = future.result()
@@ -740,18 +764,20 @@ def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_p
                 record_upload_result(manifest, manifest_path, cash_table_id, result)
     if errors:
         raise errors[0]
+    return cash_table_id
 
 
 def upload_cash_task_batch(
     settings: Settings,
     iceberg: IcebergMarketDataCatalog,
+    market_type: str,
     nse_symbol: str,
     tasks: tuple[CashUploadTask, ...],
 ) -> tuple[CashUploadResult, ...]:
     """Append a batch, splitting it if R2/catalog writes keep failing."""
 
     try:
-        return (upload_cash_tasks(settings, iceberg, nse_symbol, tasks),)
+        return (upload_cash_tasks(settings, iceberg, market_type, nse_symbol, tasks),)
     except Exception as exc:
         if len(tasks) == 1:
             raise
@@ -764,14 +790,15 @@ def upload_cash_task_batch(
             len(tasks) - midpoint,
             exc,
         )
-        left_results = upload_cash_task_batch(settings, iceberg, nse_symbol, tasks[:midpoint])
-        right_results = upload_cash_task_batch(settings, iceberg, nse_symbol, tasks[midpoint:])
+        left_results = upload_cash_task_batch(settings, iceberg, market_type, nse_symbol, tasks[:midpoint])
+        right_results = upload_cash_task_batch(settings, iceberg, market_type, nse_symbol, tasks[midpoint:])
         return left_results + right_results
 
 
 def upload_cash_tasks(
     settings: Settings,
     iceberg: IcebergMarketDataCatalog,
+    market_type: str,
     nse_symbol: str,
     tasks: tuple[CashUploadTask, ...],
 ) -> CashUploadResult:
@@ -779,17 +806,18 @@ def upload_cash_tasks(
 
     for attempt in range(1, settings.cash_upload_retry_attempts + 1):
         try:
-            iceberg.append_parquet_files(
-                "cash",
-                [task.local_path for task in tasks],
-                snapshot_properties={
-                    "tick_ticker.nse_symbol": nse_symbol,
-                    "tick_ticker.trade_date_from": min(task.trade_date for task in tasks).isoformat(),
-                    "tick_ticker.trade_date_to": max(task.trade_date for task in tasks).isoformat(),
-                    "tick_ticker.source_paths": json.dumps([task.local_file for task in tasks], separators=(",", ":")),
-                    "tick_ticker.write_mode": "append",
-                },
-            )
+            with _CASH_ICEBERG_APPEND_LOCK:
+                iceberg.append_parquet_files(
+                    market_type,
+                    [task.local_path for task in tasks],
+                    snapshot_properties={
+                        "tick_ticker.nse_symbol": nse_symbol,
+                        "tick_ticker.trade_date_from": min(task.trade_date for task in tasks).isoformat(),
+                        "tick_ticker.trade_date_to": max(task.trade_date for task in tasks).isoformat(),
+                        "tick_ticker.source_paths": json.dumps([task.local_file for task in tasks], separators=(",", ":")),
+                        "tick_ticker.write_mode": "append",
+                    },
+                )
             return CashUploadResult(tasks=tasks, committed=True)
         except Exception as exc:
             if attempt >= settings.cash_upload_retry_attempts:
@@ -852,6 +880,20 @@ def date_from_cash_path(path: str | Path) -> date:
     month = int(path.parent.parent.name)
     year = int(path.parent.parent.parent.name)
     return date(year, month, day)
+
+
+def cash_local_coverage(data_dir: Path, nse_symbol: str) -> CashLocalCoverage:
+    """Return local file coverage and row count for one cash symbol."""
+
+    paths = sorted((data_dir / "cash").glob(f"*/*/*/{nse_symbol}.parquet"))
+    if not paths:
+        return CashLocalCoverage(from_date=None, to_date=None, file_count=0, row_count=0)
+    return CashLocalCoverage(
+        from_date=date_from_cash_path(paths[0]),
+        to_date=date_from_cash_path(paths[-1]),
+        file_count=len(paths),
+        row_count=sum(read_cash_row_count(path) for path in paths),
+    )
 
 
 if __name__ == "__main__":

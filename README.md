@@ -6,13 +6,13 @@ Small Python sync scripts for market data. The first implemented path is cash OH
 Cloudflare D1 equity_symbol_reference
   -> ICICI Breeze historical v2
   -> local Parquet: data/cash/YYYY/MM/DD/SYMBOL.parquet
-  -> Cloudflare R2 Data Catalog Iceberg table: cash.ohlcv
+  -> Cloudflare R2 Data Catalog Iceberg table: cash.ohlcv_by_symbol
   -> D1 market_data_sync_state status = completed
 ```
 
-The script ensures three Iceberg namespaces/tables exist in the configured R2 bucket:
+The script ensures Iceberg namespaces/tables exist in the configured R2 bucket:
 
-- `cash.ohlcv`
+- `cash.ohlcv_by_symbol`
 - `options.ohlcv`
 - `future.ohlcv`
 
@@ -74,3 +74,15 @@ uv run sync-cash-data --upload-only --from-date 2026-01-01 --to-date 2026-01-31
 ```
 
 Each symbol gets a manifest in `data/state/cash/SYMBOL.json`. If a run fails after some files are written or uploaded to Iceberg, rerun with the same date range and it resumes from the manifest. Iceberg upload snapshots include the local source path, so retries can detect already committed files before appending.
+
+Backfill the symbol-optimized query table from local Parquet:
+
+```bash
+uv run backfill-cash-symbol-iceberg --workers 4 --batch-size 500
+```
+
+Reconcile local JSON manifests and D1 state from local Parquet coverage:
+
+```bash
+uv run reconcile-cash-sync-state
+```

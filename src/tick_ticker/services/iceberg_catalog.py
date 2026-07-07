@@ -16,7 +16,7 @@ from pyiceberg.partitioning import PartitionField, PartitionSpec
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 from pyiceberg.table.sorting import NullOrder, SortDirection, SortField, SortOrder
-from pyiceberg.transforms import IdentityTransform
+from pyiceberg.transforms import DayTransform, IdentityTransform, MonthTransform, Transform, YearTransform
 from pyiceberg.types import DateType, DoubleType, LongType, NestedField, StringType, TimestampType
 
 from tick_ticker.config import Settings, get_settings
@@ -129,6 +129,11 @@ class IcebergMarketDataCatalog:
         self._ensure_table_metadata(table, spec)
         return self.catalog.load_table(spec.identifier)
 
+    def load_market_table(self, market_type: MarketType) -> Table:
+        """Ensure and load one managed market-data Iceberg table."""
+
+        return self.ensure_table(self._table_spec(market_type))
+
     def append_parquet_file(
         self,
         market_type: MarketType,
@@ -158,6 +163,20 @@ class IcebergMarketDataCatalog:
         spec = self._table_spec(market_type)
         table = self.ensure_table(spec)
         arrow_table = pa.concat_tables([pq.read_table(path) for path in paths], promote_options="default")
+        table.append(arrow_table, snapshot_properties=snapshot_properties or {})
+        return spec.identifier
+
+    def append_arrow_table(
+        self,
+        market_type: MarketType,
+        arrow_table: pa.Table,
+        *,
+        snapshot_properties: dict[str, str] | None = None,
+    ) -> Identifier:
+        """Append an in-memory Arrow table into its managed Iceberg table."""
+
+        spec = self._table_spec(market_type)
+        table = self.ensure_table(spec)
         table.append(arrow_table, snapshot_properties=snapshot_properties or {})
         return spec.identifier
 
@@ -213,9 +232,9 @@ class IcebergMarketDataCatalog:
                 namespace=self.settings.iceberg_cash_namespace,
                 table_name=self.settings.iceberg_cash_table,
                 schema=CASH_OHLCV_SCHEMA,
-                partition_fields=(("trade_date", "identity"), ("nse_symbol", "identity")),
+                partition_fields=(("nse_symbol", "identity"), ("trade_date", "year")),
                 sort_fields=("nse_symbol", "trade_date", "datetime"),
-                description="NSE cash OHLCV candles by symbol and trade date.",
+                description="NSE cash OHLCV candles optimized for symbol and time-range queries.",
             ),
             IcebergTableSpec(
                 market_type="options",
@@ -238,9 +257,10 @@ class IcebergMarketDataCatalog:
         )
 
     def _table_properties(self, market_type: MarketType) -> dict[str, str]:
-        return {
+        properties = {
             "format-version": self.settings.iceberg_table_format_version,
             "write.parquet.compression-codec": self.settings.iceberg_parquet_compression,
+            "write.target-file-size-bytes": str(128 * 1024 * 1024),
             "write.metadata.delete-after-commit.enabled": "false",
             "write.metadata.previous-versions-max": "20",
             "history.expire.min-snapshots-to-keep": "10",
@@ -248,6 +268,15 @@ class IcebergMarketDataCatalog:
             "commit.manifest-merge.enabled": "true",
             "tick_ticker.market_type": market_type,
         }
+        if market_type == "cash":
+            properties |= {
+                "tick_ticker.query_layout": "symbol_time_range",
+                "tick_ticker.partitioning": "nse_symbol,year(trade_date)",
+                "tick_ticker.sort_order": "nse_symbol,trade_date,datetime",
+                "tick_ticker.time_grain": "1minute",
+                "tick_ticker.primary_time_column": "datetime",
+            }
+        return properties
 
     def _ensure_table_metadata(self, table: Table, spec: IcebergTableSpec) -> None:
         """Evolve table metadata to the current Tick Ticker layout."""
@@ -318,10 +347,16 @@ class IcebergMarketDataCatalog:
         return source_column if transform_name == "identity" else f"{transform_name}_{source_column}"
 
     @staticmethod
-    def _partition_transform(transform_name: str) -> IdentityTransform:
-        if transform_name != "identity":
-            raise ValueError(f"Unsupported partition transform: {transform_name}")
-        return IdentityTransform()
+    def _partition_transform(transform_name: str) -> Transform:
+        if transform_name == "identity":
+            return IdentityTransform()
+        if transform_name == "year":
+            return YearTransform()
+        if transform_name == "month":
+            return MonthTransform()
+        if transform_name == "day":
+            return DayTransform()
+        raise ValueError(f"Unsupported partition transform: {transform_name}")
 
     def _catalog_uri(self) -> str:
         if self.settings.r2_data_catalog_uri:

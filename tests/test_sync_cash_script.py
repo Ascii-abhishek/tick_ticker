@@ -12,6 +12,7 @@ from tick_ticker.db.repositories import MarketDataSyncStateRepository
 from tick_ticker.scripts.sync_cash_data import (
     BreezeRequestBudget,
     BreezeRequestBudgetExceededError,
+    CashUploadTask,
     DateRangeTooLargeError,
     count_missing_fetch_requests,
     coverage_from_date,
@@ -21,6 +22,7 @@ from tick_ticker.scripts.sync_cash_data import (
     resolve_non_negative_count,
     resolve_worker_count,
     sync_resolved_symbols,
+    upload_cash_tasks,
     upload_to_iceberg,
     validate_date_range,
 )
@@ -276,6 +278,13 @@ def test_manifest_resets_for_new_range_after_upload(tmp_path: Path) -> None:
     )
     manifest.fetched_files = ["data/cash/2026/01/01/RELIANCE.parquet"]
     manifest.uploaded_files = ["data/cash/2026/01/01/RELIANCE.parquet"]
+    manifest.record_upload_event(
+        table="cash.ohlcv_by_symbol",
+        coverage_from_date=date(2026, 1, 1),
+        coverage_to_date=date(2026, 1, 1),
+        coverage_file_count=1,
+        coverage_row_count=100,
+    )
     manifest.save(manifest_path)
 
     next_manifest = load_or_create_manifest(
@@ -289,6 +298,13 @@ def test_manifest_resets_for_new_range_after_upload(tmp_path: Path) -> None:
     assert next_manifest.from_date == date(2026, 1, 2)
     assert next_manifest.to_date == date(2026, 1, 2)
     assert next_manifest.fetched_files == []
+    assert next_manifest.uploaded_files == []
+    assert next_manifest.coverage_from_date == date(2026, 1, 1)
+    assert next_manifest.coverage_to_date == date(2026, 1, 1)
+    assert next_manifest.coverage_file_count == 1
+    assert next_manifest.coverage_row_count == 100
+    assert next_manifest.last_upload is not None
+    assert next_manifest.last_upload.table == "cash.ohlcv_by_symbol"
 
 
 def test_manifest_extends_partial_range_for_incremental_retry(tmp_path: Path) -> None:
@@ -387,7 +403,7 @@ def test_upload_to_iceberg_appends_uncommitted_source_path(monkeypatch: pytest.M
             self.settings = settings
 
         def ensure_market_data_tables(self) -> dict[str, tuple[str, str]]:
-            return {"cash": ("cash", "ohlcv")}
+            return {"cash": ("cash", "ohlcv_by_symbol")}
 
         def committed_source_paths(self, market_type: str) -> set[str]:
             return set()
@@ -450,7 +466,7 @@ def test_upload_to_iceberg_splits_failed_batch(monkeypatch: pytest.MonkeyPatch, 
             self.settings = settings
 
         def ensure_market_data_tables(self) -> dict[str, tuple[str, str]]:
-            return {"cash": ("cash", "ohlcv")}
+            return {"cash": ("cash", "ohlcv_by_symbol")}
 
         def committed_source_paths(self, market_type: str) -> set[str]:
             return set()
@@ -466,6 +482,72 @@ def test_upload_to_iceberg_splits_failed_batch(monkeypatch: pytest.MonkeyPatch, 
 
     assert [len(paths) for paths in calls] == [4, 2, 1, 1, 2, 1, 1]
     assert CashSyncManifest.load(manifest_path).uploaded_files == [str(path) for path in parquet_paths]
+
+
+def test_upload_cash_tasks_serializes_cash_iceberg_commits(tmp_path: Path) -> None:
+    rows = transform_cash_payload(
+        {
+            "Success": [
+                {
+                    "datetime": "2026-01-02 09:15:00",
+                    "open": "100",
+                    "high": "101",
+                    "low": "99",
+                    "close": "100.5",
+                    "volume": "10",
+                }
+            ]
+        },
+        nse_symbol="RELIANCE",
+        exchange_code="NSE",
+        product_type="cash",
+    )
+    first_path = tmp_path / "first.parquet"
+    second_path = tmp_path / "second.parquet"
+    write_cash_parquet(rows, first_path)
+    write_cash_parquet(rows, second_path)
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    class FakeCatalog:
+        def append_parquet_files(self, market_type: str, paths: list[Path], *, snapshot_properties: dict[str, str]) -> None:
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+
+    def task(path: Path) -> tuple[CashUploadTask, ...]:
+        return (
+            CashUploadTask(
+                local_file=str(path),
+                local_path=path,
+                trade_date=date(2026, 1, 2),
+                row_count=1,
+            ),
+        )
+
+    errors = []
+
+    def run_upload(symbol: str, path: Path) -> None:
+        try:
+            upload_cash_tasks(Settings(_env_file=None), FakeCatalog(), "cash", symbol, task(path))
+        except BaseException as exc:
+            errors.append(exc)
+
+    first_thread = threading.Thread(target=run_upload, args=("AAA", first_path))
+    second_thread = threading.Thread(target=run_upload, args=("BBB", second_path))
+
+    first_thread.start()
+    second_thread.start()
+    first_thread.join()
+    second_thread.join()
+
+    assert errors == []
+    assert max_active == 1
 
 
 class SqliteD1Client:
@@ -518,7 +600,7 @@ def test_upload_to_iceberg_marks_already_committed_source_path(monkeypatch: pyte
             self.settings = settings
 
         def ensure_market_data_tables(self) -> dict[str, tuple[str, str]]:
-            return {"cash": ("cash", "ohlcv")}
+            return {"cash": ("cash", "ohlcv_by_symbol")}
 
         def committed_source_paths(self, market_type: str) -> set[str]:
             return {str(parquet_path)}

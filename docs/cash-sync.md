@@ -18,7 +18,7 @@ Run recent catch-up across many symbols:
 uv run sync-cash-data --all --from-date 2026-07-01 --to-date 2026-07-05 --symbol-workers 20 --download-workers 1 --upload-workers 1
 ```
 
-`--symbol-workers` parallelizes symbols. `--download-workers` parallelizes date chunks inside one symbol, so keep it low when symbol workers are high. When `--all` finds a symbol whose date range is larger than `CASH_SYNC_MAX_DAYS_PER_RUN`, it logs a skip and continues with the next symbol. Pass `--allow-large-range` only when you intentionally want those large backfills.
+`--symbol-workers` parallelizes symbols. `--download-workers` parallelizes date chunks inside one symbol, so keep it low when symbol workers are high. Iceberg appends target `cash.ohlcv_by_symbol` by default and are serialized inside the process to avoid snapshot commit conflicts while downloads continue in parallel. When `--all` finds a symbol whose date range is larger than `CASH_SYNC_MAX_DAYS_PER_RUN`, it logs a skip and continues with the next symbol. Pass `--allow-large-range` only when you intentionally want those large backfills.
 
 Run one NSE symbol:
 
@@ -44,6 +44,18 @@ Upload existing local files to Iceberg only:
 uv run sync-cash-data --upload-only --from-date 2026-01-01 --to-date 2026-01-31
 ```
 
+Backfill the symbol-optimized Iceberg query table from local Parquet:
+
+```bash
+uv run backfill-cash-symbol-iceberg --workers 4 --batch-size 500
+```
+
+Reconcile local JSON manifests and D1 from existing local Parquet coverage:
+
+```bash
+uv run reconcile-cash-sync-state
+```
+
 Allow a large range:
 
 ```bash
@@ -64,8 +76,8 @@ What the script does:
 - If no `--to-date`, uses today.
 - Uses `breeze_code` only for the Breeze API request.
 - Stores local Parquet with `nse_symbol`.
-- Ensures Iceberg namespaces/tables exist: `cash.ohlcv`, `options.ohlcv`, `future.ohlcv`.
-- Appends cash files to `cash.ohlcv` unless `--local-only` or `--fetch-only` is passed.
+- Ensures Iceberg namespaces/tables exist: `cash.ohlcv_by_symbol`, `options.ohlcv`, `future.ohlcv`.
+- Appends cash files to `cash.ohlcv_by_symbol` unless `--local-only` or `--fetch-only` is passed.
 - Marks `market_data_sync_state.status = 'completed'` only after Iceberg upload.
 
 Resume behavior:
@@ -73,6 +85,9 @@ Resume behavior:
 - Manifest path: `data/state/cash/NSE_SYMBOL.json`.
 - Already fetched files are skipped.
 - Already uploaded files are skipped.
+- Manifest `from_date`, `to_date`, `fetched_files`, and `uploaded_files` describe the active/resumable run.
+- Manifest `coverage_from_date`, `coverage_to_date`, `coverage_file_count`, and `coverage_row_count` describe durable local/uploaded coverage and are preserved when a new incremental run starts.
+- Manifest `last_fetch` and `last_upload` keep the latest completed fetch/upload summary visible even after the active run range changes.
 - If a run is interrupted after an Iceberg commit but before the manifest is saved, retrying checks committed snapshot source-path metadata before appending duplicates.
 - Non-empty local parquet files are uploaded in batches controlled by `CASH_UPLOAD_BATCH_SIZE`.
 - After a completed upload, a later date range resets the manifest for the new incremental run.

@@ -118,8 +118,19 @@ def read_cash_row_count(path: Path) -> int:
     return pq.ParquetFile(path).metadata.num_rows
 
 
+class CashSyncEvent(BaseModel):
+    """Human-readable summary for one completed local sync phase."""
+
+    from_date: date
+    to_date: date
+    file_count: int
+    row_count: int
+    completed_at: datetime
+    table: str | None = None
+
+
 class CashSyncManifest(BaseModel):
-    """Local resumability state for one symbol."""
+    """Local resumability and audit state for one symbol."""
 
     nse_symbol: str
     breeze_code: str
@@ -127,10 +138,63 @@ class CashSyncManifest(BaseModel):
     to_date: date
     fetched_files: list[str] = []
     uploaded_files: list[str] = []
+    coverage_from_date: date | None = None
+    coverage_to_date: date | None = None
+    coverage_file_count: int = 0
+    coverage_row_count: int = 0
+    last_fetch: CashSyncEvent | None = None
+    last_upload: CashSyncEvent | None = None
 
     @property
     def row_count(self) -> int:
         return sum(read_cash_row_count(Path(path)) for path in self.fetched_files if Path(path).exists())
+
+    def begin_run(self, from_date: date, to_date: date, *, breeze_code: str | None = None) -> None:
+        """Start a fresh resumable run while preserving durable audit fields."""
+
+        if breeze_code is not None:
+            self.breeze_code = breeze_code
+        self.from_date = from_date
+        self.to_date = to_date
+        self.fetched_files = []
+        self.uploaded_files = []
+
+    def record_fetch_event(self, *, completed_at: datetime | None = None) -> None:
+        """Persist the latest completed fetch range."""
+
+        self.last_fetch = CashSyncEvent(
+            from_date=self.from_date,
+            to_date=self.to_date,
+            file_count=len(self.fetched_files),
+            row_count=self.row_count,
+            completed_at=completed_at or utc_now(),
+        )
+
+    def record_upload_event(
+        self,
+        *,
+        table: str,
+        coverage_from_date: date,
+        coverage_to_date: date,
+        coverage_file_count: int,
+        coverage_row_count: int,
+        completed_at: datetime | None = None,
+    ) -> None:
+        """Persist the latest completed upload range and durable coverage."""
+
+        completed = completed_at or utc_now()
+        self.coverage_from_date = coverage_from_date
+        self.coverage_to_date = coverage_to_date
+        self.coverage_file_count = coverage_file_count
+        self.coverage_row_count = coverage_row_count
+        self.last_upload = CashSyncEvent(
+            from_date=self.from_date,
+            to_date=self.to_date,
+            file_count=len(self.uploaded_files),
+            row_count=self.row_count,
+            completed_at=completed,
+            table=table,
+        )
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

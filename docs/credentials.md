@@ -28,12 +28,15 @@ Operational settings:
 - `CASH_DOWNLOAD_WORKERS`: Concurrent Breeze download workers. Default: `1`.
 - `CASH_UPLOAD_WORKERS`: Concurrent Iceberg upload workers. Default: `1`.
 - `CASH_UPLOAD_BATCH_SIZE`: Local parquet files per Iceberg upload commit. Default: `25`.
+- `CASH_SYMBOL_UPLOAD_WORKERS`: Concurrent local preparation workers for `backfill-cash-symbol-iceberg`. Default: `4`.
+- `CASH_SYMBOL_UPLOAD_BATCH_SIZE`: Local parquet files per symbol/year backfill append. Default: `500`.
 - `CASH_UPLOAD_RETRY_ATTEMPTS`: Iceberg upload retry attempts. Default: `3`.
 - `CASH_UPLOAD_RETRY_BASE_DELAY_SECONDS`: Base delay between Iceberg upload retries. Default: `1.0`.
 - `CASH_SYNC_MAX_DAYS_PER_RUN`: Safety limit for one run. Default: `30`.
 - `CASH_SYNC_FROM_DATE`: Optional default start date.
 - `CASH_SYNC_TO_DATE`: Optional default end date.
 - `ICEBERG_CASH_NAMESPACE`: Default: `cash`.
+- `ICEBERG_CASH_TABLE`: Default: `ohlcv_by_symbol`.
 - `ICEBERG_OPTIONS_NAMESPACE`: Default: `options`.
 - `ICEBERG_FUTURE_NAMESPACE`: Default: `future`.
 

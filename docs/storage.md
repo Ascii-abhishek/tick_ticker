@@ -17,14 +17,14 @@ data/
 Iceberg catalog layout:
 
 ```text
-cash.ohlcv
+cash.ohlcv_by_symbol
 options.ohlcv
 future.ohlcv
 ```
 
 Iceberg table layout:
 
-- `cash.ohlcv` partitions by `trade_date`, `nse_symbol`; sort order is `nse_symbol`, `trade_date`, `datetime`.
+- `cash.ohlcv_by_symbol` partitions by `nse_symbol`, `year(trade_date)`; sort order is `nse_symbol`, `trade_date`, `datetime`. This is the preferred query table for symbol history and symbol/date-range reads.
 - `options.ohlcv` partitions by `trade_date`, `underlying`, `expiry_date`; sort order is `underlying`, `expiry_date`, `strike_price`, `option_type`, `datetime`.
 - `future.ohlcv` partitions by `trade_date`, `underlying`, `expiry_date`; sort order is `underlying`, `expiry_date`, `datetime`.
 - Snapshot expiration policy keeps at least 10 snapshots and targets 30 days, when a maintenance engine runs expiration.
@@ -59,6 +59,7 @@ Local partitioning:
 - Then date: `YYYY/MM/DD`.
 - Then symbol file: `NSE_SYMBOL.parquet`.
 - Local partitioning is only staging; the durable query surface is the Iceberg table.
+- Backfills and future cash uploads target `cash.ohlcv_by_symbol`.
 
 Notes:
 
