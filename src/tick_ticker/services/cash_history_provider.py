@@ -7,6 +7,7 @@ from datetime import date
 
 CASH_PROVIDER_HISTORY_START_DATES = {
     "breeze": date(2016, 1, 1),
+    "upstox": date(2022, 1, 1),
 }
 
 

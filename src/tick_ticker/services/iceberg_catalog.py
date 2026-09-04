@@ -21,7 +21,7 @@ from pyiceberg.types import DateType, DoubleType, LongType, NestedField, StringT
 
 from tick_ticker.config import Settings, get_settings
 
-MarketType = Literal["cash", "options", "future"]
+MarketType = Literal["cash", "cash_1s", "options", "future"]
 Identifier = tuple[str, str]
 
 
@@ -56,6 +56,8 @@ CASH_OHLCV_SCHEMA = Schema(
     NestedField(11, "count", LongType()),
     NestedField(12, "ingested_at", TimestampType()),
 )
+
+CASH_SECOND_OHLCV_SCHEMA = CASH_OHLCV_SCHEMA
 
 OPTIONS_OHLCV_SCHEMA = Schema(
     NestedField(1, "datetime", TimestampType()),
@@ -237,6 +239,15 @@ class IcebergMarketDataCatalog:
                 description="NSE cash OHLCV candles optimized for symbol and time-range queries.",
             ),
             IcebergTableSpec(
+                market_type="cash_1s",
+                namespace=self.settings.iceberg_cash_second_namespace,
+                table_name=self.settings.iceberg_cash_second_table,
+                schema=CASH_SECOND_OHLCV_SCHEMA,
+                partition_fields=(("nse_symbol", "identity"), ("trade_date", "month")),
+                sort_fields=("nse_symbol", "trade_date", "datetime"),
+                description="NSE cash 1-second OHLCV candles optimized for symbol and intraday time-range queries.",
+            ),
+            IcebergTableSpec(
                 market_type="options",
                 namespace=self.settings.iceberg_options_namespace,
                 table_name=self.settings.iceberg_options_table,
@@ -260,7 +271,7 @@ class IcebergMarketDataCatalog:
         properties = {
             "format-version": self.settings.iceberg_table_format_version,
             "write.parquet.compression-codec": self.settings.iceberg_parquet_compression,
-            "write.target-file-size-bytes": str(128 * 1024 * 1024),
+            "write.target-file-size-bytes": str((256 if market_type == "cash_1s" else 128) * 1024 * 1024),
             "write.metadata.delete-after-commit.enabled": "false",
             "write.metadata.previous-versions-max": "20",
             "history.expire.min-snapshots-to-keep": "10",
@@ -275,6 +286,16 @@ class IcebergMarketDataCatalog:
                 "tick_ticker.sort_order": "nse_symbol,trade_date,datetime",
                 "tick_ticker.time_grain": "1minute",
                 "tick_ticker.primary_time_column": "datetime",
+            }
+        if market_type == "cash_1s":
+            properties |= {
+                "write.parquet.row-group-size-bytes": str(16 * 1024 * 1024),
+                "tick_ticker.query_layout": "symbol_intraday_time_range",
+                "tick_ticker.partitioning": "nse_symbol,month(trade_date)",
+                "tick_ticker.sort_order": "nse_symbol,trade_date,datetime",
+                "tick_ticker.time_grain": "1second",
+                "tick_ticker.primary_time_column": "datetime",
+                "tick_ticker.local_layout": "cash_1s/by_symbol/NSE_SYMBOL/YYYY/MM/DD.parquet",
             }
         return properties
 

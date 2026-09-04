@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     breeze_request_retry_attempts: int = 3
     breeze_request_retry_base_delay_seconds: float = 1.0
 
+    upstox_access_token: str = Field(default="")
+    upstox_base_url: str = "https://api.upstox.com"
+    upstox_min_request_interval_seconds: float = 1.0
+    upstox_max_requests_per_run: int = 1800
+    upstox_request_retry_attempts: int = 3
+    upstox_request_retry_base_delay_seconds: float = 1.0
+
     cloudflare_account_id: str = Field(default="")
     cloudflare_api_token: str = Field(default="")
     d1_database_id: str = Field(default="")
@@ -49,6 +56,8 @@ class Settings(BaseSettings):
     r2_data_catalog_warehouse: str = ""
     iceberg_cash_namespace: str = "cash"
     iceberg_cash_table: str = "ohlcv_by_symbol"
+    iceberg_cash_second_namespace: str = "cash"
+    iceberg_cash_second_table: str = "ohlcv_1s_by_symbol"
     iceberg_options_namespace: str = "options"
     iceberg_options_table: str = "ohlcv"
     iceberg_future_namespace: str = "future"
@@ -58,7 +67,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
     default_interval: str = "1minute"
-    cash_history_provider: Literal["breeze"] = "breeze"
+    cash_history_provider: Literal["breeze", "upstox"] = "breeze"
     cash_exchange_code: str = "NSE"
     cash_product_type: str = "cash"
     cash_history_chunk_days: int = 1
@@ -74,6 +83,21 @@ class Settings(BaseSettings):
     cash_sync_from_date: date | None = None
     cash_sync_to_date: date | None = None
 
+    cash_second_interval: str = "1second"
+    cash_second_history_window_seconds: int = 900
+    cash_second_max_candles_per_request: int = 1000
+    cash_second_market_open_time: str = "09:15:00"
+    cash_second_market_close_time: str = "15:30:00"
+    cash_second_skip_weekends: bool = True
+    cash_second_use_minute_empty_days: bool = True
+    cash_second_symbol_workers: int = 1
+    cash_second_download_workers: int = 1
+    cash_second_upload_workers: int = 1
+    cash_second_upload_batch_size: int = 10
+    cash_second_sync_max_days_per_run: int = 7
+    cash_second_sync_from_date: date | None = date(2026, 1, 1)
+    cash_second_sync_to_date: date | None = None
+
     @field_validator("log_level")
     @classmethod
     def normalize_log_level(cls, value: str) -> str:
@@ -84,7 +108,7 @@ class Settings(BaseSettings):
     def normalize_data_dir(cls, value: str | Path) -> Path:
         return Path(value)
 
-    @field_validator("cash_sync_from_date", "cash_sync_to_date", mode="before")
+    @field_validator("cash_sync_from_date", "cash_sync_to_date", "cash_second_sync_from_date", "cash_second_sync_to_date", mode="before")
     @classmethod
     def blank_dates_are_none(cls, value: object) -> object:
         if value == "":

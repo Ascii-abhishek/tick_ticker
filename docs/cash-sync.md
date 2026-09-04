@@ -12,6 +12,14 @@ Run every pending or stale cash symbol:
 uv run sync-cash-data --all
 ```
 
+Run every pending or stale cash symbol through Upstox:
+
+```bash
+uv run sync-cash-upstox-data
+```
+
+With no `--nse-symbol`, `sync-cash-upstox-data` walks all due symbols one by one by default. It stops cleanly when `UPSTOX_MAX_REQUESTS_PER_RUN` is exhausted, and the next run resumes from D1 sync state.
+
 Run recent catch-up across many symbols:
 
 ```bash
@@ -24,6 +32,18 @@ Run one NSE symbol:
 
 ```bash
 uv run sync-cash-data --nse-symbol RELIANCE
+```
+
+Run one NSE symbol through Upstox:
+
+```bash
+uv run sync-cash-upstox-data --nse-symbol RELIANCE --from-date 2022-01-01 --to-date 2022-01-31
+```
+
+Run NIFTY through Upstox:
+
+```bash
+uv run sync-cash-upstox-data --nse-symbol NIFTY --from-date 2022-01-01 --to-date 2022-01-31
 ```
 
 Fetch only:
@@ -67,7 +87,8 @@ What the script does:
 - Ensures `market_data_sync_state` exists.
 - If `--nse-symbol` is passed, reads that symbol from `equity_symbol_reference`.
 - If `--all` is passed, reads every due cash symbol from D1 and processes them with up to `CASH_SYMBOL_WORKERS` workers.
-- If neither `--nse-symbol` nor `--all` is passed, reads first due cash symbol from D1.
+- For `sync-cash-data`, if neither `--nse-symbol` nor `--all` is passed, reads first due cash symbol from D1.
+- For `sync-cash-upstox-data`, if `--nse-symbol` is not passed, reads every due cash symbol from D1.
 - A completed symbol is due again when its `to_date` is older than the requested `--to-date`, or older than today when `--to-date` is omitted.
 - Uses `--from-date` when passed.
 - If no `--from-date`, resumes from completed `to_date + 1`.
@@ -75,8 +96,9 @@ What the script does:
 - Uses `--to-date` when passed.
 - If no `--to-date`, uses today.
 - Uses `breeze_code` only for the Breeze API request.
+- `sync-cash-upstox-data` uses `isin` for the Upstox API request. Normal equity rows become `NSE_EQ|<isin>`. Index rows can store the full Upstox instrument key in `isin`, such as `NSE_INDEX|Nifty 50`.
 - Stores local Parquet with `nse_symbol`.
-- Ensures Iceberg namespaces/tables exist: `cash.ohlcv_by_symbol`, `options.ohlcv`, `future.ohlcv`.
+- Ensures Iceberg namespaces/tables exist: `cash.ohlcv_by_symbol`, `cash.ohlcv_1s_by_symbol`, `options.ohlcv`, `future.ohlcv`.
 - Appends cash files to `cash.ohlcv_by_symbol` unless `--local-only` or `--fetch-only` is passed.
 - Marks `market_data_sync_state.status = 'completed'` only after Iceberg upload.
 
@@ -102,5 +124,8 @@ Safety:
 - Breeze lists a 100 calls/minute and 5000 calls/day API limit; historical v2 returns at most 1000 candles per request.
 - Breeze rate limiting is process-wide and handled by `BREEZE_MIN_REQUEST_INTERVAL_SECONDS`. The default `0.65` seconds stays under 100 calls/minute.
 - `BREEZE_MAX_REQUESTS_PER_RUN` defaults to `4500` historical requests to leave room for session/login and other API calls. Set `--breeze-max-requests 0` only when you intentionally manage the daily limit outside this script.
+- Upstox 1-minute history starts at `2022-01-01`, and `sync-cash-upstox-data` clamps older requested/default start dates to that date.
+- Upstox requests are month-bounded and process-wide rate limited by `UPSTOX_MIN_REQUEST_INTERVAL_SECONDS`. The default `1.0` second interval stays under 2000 requests per 30 minutes.
+- `UPSTOX_MAX_REQUESTS_PER_RUN` defaults to `1800` to leave room under the 2000 requests per 30 minutes limit. Set `--upstox-max-requests 0` only when you intentionally manage the limit outside this script.
 - Use `--symbol-workers 20` or `--symbol-workers 30` for short recent ranges. Avoid combining high symbol workers with high `--download-workers`.
 - Use `--download-workers` and `--upload-workers` carefully; both default to `1`.

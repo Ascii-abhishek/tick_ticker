@@ -24,6 +24,8 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 sync-cash-data = "tick_ticker.scripts.sync_cash_data:main"
+sync-cash-upstox-data = "tick_ticker.scripts.sync_cash_upstox_data:main"
+sync-cash-second-data = "tick_ticker.scripts.sync_cash_second_data:main"
 backfill-cash-symbol-iceberg = "tick_ticker.scripts.backfill_cash_symbol_iceberg:main"
 reconcile-cash-sync-state = "tick_ticker.scripts.reconcile_cash_sync_state:main"
 

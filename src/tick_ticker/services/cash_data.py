@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -94,6 +94,53 @@ def transform_cash_payload(
                 ingested_at=ingested_at,
             )
         )
+    return rows
+
+
+def extract_upstox_candles(payload: Mapping[str, Any] | Iterable[Sequence[Any]]) -> list[Sequence[Any]]:
+    """Extract candle arrays from Upstox's historical data envelope."""
+
+    if isinstance(payload, Mapping):
+        data = payload.get("data") or {}
+        candles = data.get("candles") if isinstance(data, Mapping) else None
+        if isinstance(candles, list):
+            return [_candle for _candle in candles if _is_candle_sequence(_candle)]
+        return []
+    return [_candle for _candle in payload if _is_candle_sequence(_candle)]
+
+
+def transform_upstox_cash_payload(
+    payload: Mapping[str, Any] | Iterable[Sequence[Any]],
+    *,
+    nse_symbol: str,
+    exchange_code: str,
+    product_type: str,
+) -> list[CashOHLCV]:
+    """Normalize Upstox historical candle arrays into NSE-symbol analytics rows."""
+
+    rows: list[CashOHLCV] = []
+    ingested_at = utc_now()
+    for candle in extract_upstox_candles(payload):
+        if len(candle) < 6:
+            raise ValueError(f"Upstox candle must have at least 6 values, got {len(candle)}")
+        candle_at = parse_datetime(str(candle[0]))
+        rows.append(
+            CashOHLCV(
+                datetime=candle_at,
+                trade_date=candle_at.date(),
+                nse_symbol=nse_symbol,
+                exchange_code=exchange_code,
+                product_type=product_type,
+                open=float(candle[1] or 0),
+                high=float(candle[2] or 0),
+                low=float(candle[3] or 0),
+                close=float(candle[4] or 0),
+                volume=max(0, int(float(candle[5] or 0))),
+                count=None,
+                ingested_at=ingested_at,
+            )
+        )
+    rows.sort(key=lambda row: row.datetime)
     return rows
 
 
@@ -227,3 +274,7 @@ def _optional_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
     return int(float(value))
+
+
+def _is_candle_sequence(value: Any) -> bool:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))

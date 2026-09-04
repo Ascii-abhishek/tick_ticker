@@ -14,7 +14,7 @@ import os
 import pytest
 
 from tick_ticker.config import Settings
-from tick_ticker.utils.engines import BreezeClient, D1Client
+from tick_ticker.utils.engines import BreezeClient, D1Client, UpstoxClient
 
 
 pytestmark = pytest.mark.credentials
@@ -33,6 +33,7 @@ def test_required_env_values_are_set() -> None:
         "BREEZE_API_KEY": settings.breeze_api_key,
         "BREEZE_API_SECRET": settings.breeze_api_secret,
         "BREEZE_SESSION_TOKEN": settings.breeze_session_token,
+        "UPSTOX_ACCESS_TOKEN": settings.upstox_access_token,
         "CLOUDFLARE_ACCOUNT_ID": settings.cloudflare_account_id,
         "CLOUDFLARE_API_TOKEN": settings.cloudflare_api_token,
         "D1_DATABASE_ID": settings.d1_database_id,
@@ -85,3 +86,18 @@ def test_breeze_session_access() -> None:
         BreezeClient(Settings()).connect()
     except Exception as exc:
         pytest.fail(f"Breeze session failed; refresh BREEZE_SESSION_TOKEN if expired: {exc}")
+
+
+def test_upstox_historical_access() -> None:
+    require_credential_tests_enabled()
+
+    try:
+        response = UpstoxClient(Settings()).get_historical_cash(
+            instrument_key="NSE_EQ|INE002A01018",
+            from_date="2022-01-03",
+            to_date="2022-01-03",
+        )
+    except Exception as exc:
+        pytest.fail(f"Upstox historical access failed; check UPSTOX_ACCESS_TOKEN: {exc}")
+    candles = ((response.get("data") or {}).get("candles") or []) if isinstance(response.get("data"), dict) else []
+    assert candles
