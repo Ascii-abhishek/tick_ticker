@@ -1,15 +1,20 @@
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from tick_ticker.config import Settings
 from tick_ticker.db.models import EquitySymbolReference, MarketDataSyncState
 from tick_ticker.scripts.sync_cash_upstox_data import (
     UpstoxInstrumentKeyError,
     UpstoxRequestBudget,
     UpstoxRequestBudgetExceededError,
+    UpstoxFetchChunk,
     count_missing_upstox_fetch_requests,
+    fetch_cash_chunk,
     iter_calendar_month_chunks,
     parse_args,
+    resolve_requested_symbols,
     resolve_upstox_from_date,
     resolve_upstox_instrument_key,
     sync_resolved_symbols,
@@ -44,6 +49,48 @@ def test_resolve_upstox_instrument_key_wraps_equity_isin() -> None:
     symbol = EquitySymbolReference(nse_symbol="RELIANCE", breeze_code="RELIND", isin="INE002A01018")
 
     assert resolve_upstox_instrument_key(symbol) == "NSE_EQ|INE002A01018"
+
+
+def test_parse_ordered_symbols_from_arguments_and_file(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "symbols.txt"
+    source.write_text("# priority\nM&M, ACC\nBAJAJ-AUTO # comment\n")
+    monkeypatch.setattr("sys.argv", ["sync-cash-upstox-data", "--nse-symbols", "acc,RELIANCE", "--nse-symbols", "ACC", "--symbols-file", str(source)])
+    args = parse_args()
+    assert args.nse_symbols == ["ACC", "RELIANCE", "M&M", "BAJAJ-AUTO"]
+    assert not args.all_symbols
+
+
+@pytest.mark.parametrize("selection", [
+    ["--all", "--nse-symbols", "ACC"],
+    ["--nse-symbol", "ACC", "--nse-symbols", "RELIANCE"],
+    ["--nse-symbols", ","],
+])
+def test_parse_rejects_invalid_selection(monkeypatch, selection) -> None:
+    monkeypatch.setattr("sys.argv", ["sync-cash-upstox-data", *selection])
+    with pytest.raises(SystemExit):
+        parse_args()
+
+
+def test_resolve_list_reports_missing_and_preserves_order(monkeypatch) -> None:
+    monkeypatch.setattr("sys.argv", ["sync-cash-upstox-data", "--nse-symbols", "BBB", "MISSING", "AAA"])
+    args = parse_args()
+
+    class Repository:
+        def get_by_nse_symbol(self, name):
+            return None if name == "MISSING" else EquitySymbolReference(nse_symbol=name, breeze_code=name)
+
+    with pytest.raises(ValueError, match="MISSING"):
+        resolve_requested_symbols(Repository(), object(), args, date(2026, 9, 5))
+    args.skip_missing_symbols = True
+    result = resolve_requested_symbols(Repository(), object(), args, date(2026, 9, 5))
+    assert [symbol.nse_symbol for symbol in result] == ["BBB", "AAA"]
+
+
+def test_explicit_start_respects_listing_date() -> None:
+    args = Args()
+    args.from_date = "2016-01-01"
+    symbol = EquitySymbolReference(nse_symbol="JIOFIN", breeze_code="JIOFIN", listing_date=date(2023, 8, 21))
+    assert resolve_upstox_from_date(symbol, None, Settings(_env_file=None), args) == date(2023, 8, 21)
 
 
 def test_resolve_upstox_instrument_key_uses_full_reference_key() -> None:
@@ -195,3 +242,16 @@ def test_write_upstox_cash_chunk_files_splits_daily_and_writes_marker(tmp_path: 
     assert read_cash_row_count(paths[0]) == 0
     assert read_cash_row_count(paths[1]) == 1
     assert read_cash_row_count(paths[2]) == 1
+
+    # Resuming a monthly response must keep every daily file in the manifest,
+    # otherwise a later upload only sees the (often empty) marker.
+    resumed = fetch_cash_chunk(
+        Settings(_env_file=None, data_dir=tmp_path),
+        object(),  # No API call should be made for an existing chunk.
+        symbol,
+        UpstoxFetchChunk(date(2022, 1, 1), date(2022, 1, 31), paths[0]),
+        set(),
+    )
+    assert resumed.existed
+    assert resumed.local_files == tuple(str(path) for path in paths)
+    assert resumed.row_count == 2

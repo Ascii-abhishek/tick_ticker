@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -106,7 +107,7 @@ def main() -> None:
         resolve_non_negative_count(args.upstox_max_requests, settings.upstox_max_requests_per_run, "upstox-max-requests")
     )
 
-    symbols = resolve_symbols(symbol_repo, sync_repo, args, to_date)
+    symbols = resolve_requested_symbols(symbol_repo, sync_repo, args, to_date)
     if not symbols:
         logger.info("no_pending_cash_symbols")
         return
@@ -124,9 +125,9 @@ def main() -> None:
         upstox_request_budget=upstox_request_budget,
     )
 
-    if args.all_symbols:
+    if args.all_symbols or args.nse_symbols:
         logger.info(
-            "cash_upstox_sync_all_completed symbols=%s synced=%s skipped=%s upstox_requests_reserved=%s upstox_request_budget=%s",
+            "cash_upstox_sync_batch_completed symbols=%s synced=%s skipped=%s upstox_requests_reserved=%s upstox_request_budget=%s",
             len(symbols),
             synced_count,
             skipped_count,
@@ -352,11 +353,14 @@ def sync_cash_symbol(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nse-symbol", help="Sync one NSE symbol only. Example: RELIANCE.")
+    parser.add_argument("--nse-symbols", nargs="+", action="extend", help="Ordered NSE symbols, separated by spaces or commas; may be repeated.")
+    parser.add_argument("--symbols-file", type=Path, help="Ordered symbols separated by whitespace or commas; # comments supported.")
+    parser.add_argument("--skip-missing-symbols", action="store_true", help="Log and skip requested symbols absent from D1 instead of failing before fetching.")
     parser.add_argument(
         "--all",
         dest="all_symbols",
         action="store_true",
-        help="Sync every due cash symbol. This is the default when --nse-symbol is not passed.",
+        help="Sync every due cash symbol. Default when no symbol selection is passed.",
     )
     parser.add_argument(
         "--from-date",
@@ -379,7 +383,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--symbol-workers",
         type=int,
-        help="Concurrent cash symbols to process for --all. Defaults to CASH_SYMBOL_WORKERS.",
+        help="Concurrent cash symbols. Use 1 to finish each symbol in list order. Defaults to CASH_SYMBOL_WORKERS.",
     )
     parser.add_argument(
         "--upload-workers",
@@ -402,11 +406,50 @@ def parse_args() -> argparse.Namespace:
         parser.error("--local-only cannot be used with --upload-only")
     if args.fetch_only and args.upload_only:
         parser.error("--fetch-only cannot be used with --upload-only")
-    if args.all_symbols and args.nse_symbol:
-        parser.error("--all cannot be used with --nse-symbol")
-    if not args.nse_symbol:
+    explicit_selection = args.nse_symbol or args.nse_symbols is not None or args.symbols_file is not None
+    if args.all_symbols and explicit_selection:
+        parser.error("--all cannot be used with an explicit symbol selection")
+    if args.nse_symbol and (args.nse_symbols is not None or args.symbols_file is not None):
+        parser.error("--nse-symbol cannot be combined with --nse-symbols or --symbols-file")
+    requested = list(args.nse_symbols or [])
+    if args.symbols_file is not None:
+        try:
+            requested.extend(line.split("#", 1)[0] for line in args.symbols_file.read_text().splitlines())
+        except OSError as exc:
+            parser.error(str(exc))
+    args.nse_symbols = list(dict.fromkeys(token.upper() for value in requested for token in re.split(r"[\s,]+", value.strip()) if token))
+    if explicit_selection and not args.nse_symbol and not args.nse_symbols:
+        parser.error("symbol selection must contain at least one symbol")
+    if not explicit_selection:
         args.all_symbols = True
     return args
+
+
+def resolve_requested_symbols(
+    symbol_repo: EquitySymbolReferenceRepository,
+    sync_repo: MarketDataSyncStateRepository,
+    args: argparse.Namespace,
+    to_date: date,
+) -> list[EquitySymbolReference]:
+    """Resolve an explicit list in input order before any downloads start."""
+
+    if not args.nse_symbols:
+        return resolve_symbols(symbol_repo, sync_repo, args, to_date)
+    symbols = []
+    missing = []
+    for name in args.nse_symbols:
+        symbol = symbol_repo.get_by_nse_symbol(name)
+        if symbol is None:
+            missing.append(name)
+        else:
+            symbols.append(symbol)
+    if missing:
+        message = f"NSE symbols not found in equity_symbol_reference: {', '.join(missing)}"
+        if not args.skip_missing_symbols:
+            raise ValueError(message)
+        logger.warning("cash_upstox_missing_symbols_skipped symbols=%s", ",".join(missing))
+    logger.info("cash_upstox_symbols_selected requested=%s resolved=%s missing=%s", len(args.nse_symbols), len(symbols), len(missing))
+    return symbols
 
 
 def resolve_upstox_from_date(
@@ -434,14 +477,15 @@ def resolve_upstox_from_date(
     else:
         resolved = provider_start_date
 
-    if resolved < provider_start_date:
+    earliest_date = max(provider_start_date, symbol.listing_date or provider_start_date)
+    if resolved < earliest_date:
         logger.info(
-            "cash_upstox_from_date_clamped symbol=%s requested_from_date=%s provider_start_date=%s",
+            "cash_upstox_from_date_clamped symbol=%s requested_from_date=%s earliest_date=%s",
             symbol.nse_symbol,
             resolved,
-            provider_start_date,
+            earliest_date,
         )
-        return provider_start_date
+        return earliest_date
     return resolved
 
 
@@ -512,9 +556,18 @@ def fetch_cash_chunk(
     """Fetch one Upstox monthly chunk into daily local parquet files."""
 
     if str(chunk.marker_path) in fetched or chunk.marker_path.exists():
+        # A chunk marker represents all of its daily files. Preserve those paths
+        # when rebuilding a manifest for a new range, so later uploads see them.
+        local_files = []
+        current = chunk.from_date
+        while current <= chunk.to_date:
+            path = cash_local_path(settings.data_dir, current, symbol.nse_symbol)
+            if path.exists():
+                local_files.append(str(path))
+            current += timedelta(days=1)
         return CashFetchResult(
-            local_files=(str(chunk.marker_path),),
-            row_count=read_cash_row_count(chunk.marker_path) if chunk.marker_path.exists() else 0,
+            local_files=tuple(local_files),
+            row_count=sum(read_cash_row_count(Path(path)) for path in local_files),
             existed=True,
         )
 
@@ -547,7 +600,9 @@ def record_fetch_result(
     log_name = "cash_upstox_local_file_exists" if result.existed else "cash_upstox_local_file_written"
     for local_file in result.local_files:
         log = logger.debug if result.existed else logger.info
-        log("%s symbol=%s path=%s rows=%s", log_name, symbol.nse_symbol, local_file, result.row_count)
+        local_path = Path(local_file)
+        row_count = read_cash_row_count(local_path) if local_path.exists() else result.row_count
+        log("%s symbol=%s path=%s rows=%s", log_name, symbol.nse_symbol, local_file, row_count)
 
 
 def write_upstox_cash_chunk_files(

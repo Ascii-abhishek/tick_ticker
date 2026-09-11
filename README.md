@@ -68,11 +68,66 @@ Run the same 1-minute cash sync through Upstox:
 uv run sync-cash-upstox-data
 ```
 
-With no `--nse-symbol`, the Upstox command walks every due cash symbol one by one by default. Use `--nse-symbol` for a single symbol:
+With no symbol selection, the Upstox command walks every due cash symbol one by one by default. Use `--nse-symbol` for a single symbol:
 
 ```bash
 uv run sync-cash-upstox-data --nse-symbol RELIANCE --from-date 2022-01-01 --to-date 2022-01-31
 ```
+
+Select several symbols with `--nse-symbols ACC RELIANCE 'M&M'` (commas and
+repeated `--nse-symbols` are also supported), or use the saved Nifty priority list:
+
+```bash
+uv run sync-cash-upstox-data --symbols-file scripts/nifty_priority_symbols.txt \
+  --skip-missing-symbols --from-date 2016-01-01 --fetch-only \
+  --symbol-workers 1 --upstox-max-requests 5000
+```
+
+For a single ready-to-run list, `scripts/nifty_priority_symbols_current.txt`
+contains the 77 available securities in the original priority order, with the
+four current names and comments for the three unavailable securities. The
+original 80-name input is preserved in `scripts/nifty_priority_symbols.txt`.
+A bounded live test, saving separately and making no uploads:
+
+```bash
+DATA_DIR=data/upstox_smoke_test uv run sync-cash-upstox-data \
+  --symbols-file scripts/nifty_priority_symbols_current.txt \
+  --from-date 2026-09-01 --to-date 2026-09-04 --fetch-only \
+  --no-ensure-sync-table --upstox-max-requests 100
+```
+
+Only the selected symbols are processed. Duplicates are removed in first-seen
+order; one symbol worker completes each symbol before starting the next. Files
+accept whitespace/comma separators and `#` comments. `--nse-symbols` may be
+combined with `--symbols-file` (CLI names first), but explicit selections cannot
+be combined with `--all`. Missing D1 symbols fail before downloads unless
+`--skip-missing-symbols` is passed, which logs the missing names. Historical names
+are not automatically substituted with a different security.
+
+As checked on September 6, 2026, the original priority list contains four renamed
+symbols: `TATAMOTORS → TMPV`, `INFRATEL → INDUSTOWER`,
+`IBULHSGFIN → SAMMAANCAP`, and `LTIM → LTM`. Fetch these explicitly under their
+current D1 names:
+
+```bash
+uv run sync-cash-upstox-data --nse-symbols TMPV INDUSTOWER SAMMAANCAP LTM \
+  --from-date 2016-01-01 --fetch-only --symbol-workers 1
+```
+
+`CAIRN`, `HDFC`, and `TATAMTRDVR` are also absent from the current D1 reference.
+Live Upstox probes rejected the former HDFC and Tata Motors DVR instrument keys
+with `UDAPI100011` (invalid instrument key); their histories are not substituted
+with the acquiring companies' candles.
+
+The script stores **1-minute** candles. [Upstox History V3 documentation](https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/)
+specifies minute/hour history from January 2022; daily/weekly/monthly history is
+available from January 2000. Earlier requested dates are clamped to January 1,
+2022, and every start date also respects the symbol's listing date. Daily candles
+are not interchangeable with the minute data stored here. `--fetch-only` saves
+real Parquet data and manifests without uploading to Iceberg or marking D1 sync
+completion. Omit it for the normal upload flow. The request budget is a run cap,
+separate from the API rate limiter; the default one-second request spacing stays
+within Upstox's documented 2,000 requests per 30 minutes.
 
 For safety, ranges longer than `CASH_SYNC_MAX_DAYS_PER_RUN` are rejected unless explicitly allowed:
 
