@@ -9,6 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -23,14 +24,21 @@ from tick_ticker.services.cash_data import (
     transform_cash_payload,
     write_cash_parquet,
 )
+from tick_ticker.services.cash_coverage import scan_local_cash
 from tick_ticker.services.cash_history_provider import cash_provider_history_start_date
 from tick_ticker.services.iceberg_catalog import IcebergMarketDataCatalog
-from tick_ticker.utils.datetime import breeze_datetime, iter_date_chunks, parse_date, utc_now
+from tick_ticker.utils.datetime import breeze_datetime, iter_date_chunks, last_completed_session_bound, parse_date, utc_now
 from tick_ticker.utils.engines import create_breeze_client, create_d1_client
 from tick_ticker.utils.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
 _CASH_ICEBERG_APPEND_LOCK = threading.Lock()
+# Breeze historical v2 returns at most 1000 candles; a 1-minute session with
+# pre-open and post-close candles has up to 378.
+BREEZE_MAX_CANDLES_PER_REQUEST = 1000
+BREEZE_MAX_CANDLES_PER_SESSION = 378
+# Pre-2022 local data has few symbols, so a low threshold still rejects noise.
+SESSION_CALENDAR_MIN_SYMBOLS = 3
 
 
 @dataclass(frozen=True)
@@ -367,7 +375,7 @@ def parse_args() -> argparse.Namespace:
         "--from-date",
         help="Inclusive start date, YYYY-MM-DD. Defaults to CASH_SYNC_FROM_DATE or the provider-supported listing date.",
     )
-    parser.add_argument("--to-date", help="Inclusive end date, YYYY-MM-DD. Defaults to CASH_SYNC_TO_DATE or today.")
+    parser.add_argument("--to-date", help="Inclusive end date, YYYY-MM-DD. Defaults to CASH_SYNC_TO_DATE or yesterday (IST); later dates are clamped to yesterday.")
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch Breeze data into local Parquet.")
     parser.add_argument("--local-only", action="store_true", help="Only download local Parquet; do not upload to Iceberg or update sync state.")
     parser.add_argument("--upload-only", action="store_true", help="Only upload existing local Parquet files to Iceberg and mark D1.")
@@ -455,16 +463,23 @@ def resolve_symbols(
     """Resolve one explicit/next symbol, or all due cash symbols."""
 
     if args.all_symbols:
-        return sync_repo.due_cash_symbols(target_to_date=to_date)
+        return sync_repo.due_cash_symbols(target_to_date=to_date, synced_only=getattr(args, "synced_only", False))
 
     symbol = resolve_symbol(symbol_repo, sync_repo, args, to_date)
     return [symbol] if symbol is not None else []
 
 
 def resolve_to_date(settings: Settings, args: argparse.Namespace) -> date:
-    """Resolve the inclusive end date."""
+    """Resolve the inclusive end date, never later than the last completed session."""
 
-    return parse_date(args.to_date) if args.to_date else settings.cash_sync_to_date or date.today()
+    requested = parse_date(args.to_date) if args.to_date else settings.cash_sync_to_date
+    bound = last_completed_session_bound()
+    if requested is None:
+        return bound
+    if requested > bound:
+        logger.warning("cash_to_date_clamped requested_to_date=%s last_completed_session_bound=%s", requested, bound)
+        return bound
+    return requested
 
 
 def resolve_from_date(
@@ -582,12 +597,47 @@ def count_missing_fetch_requests(
 
     fetched = set(manifest.fetched_files)
     requests = 0
-    for chunk_start, _chunk_end in iter_date_chunks(from_date, to_date, chunk_days=settings.cash_history_chunk_days):
+    for chunk_start, _chunk_end in plan_fetch_chunks(settings, from_date, to_date):
         local_path = cash_local_path(settings.data_dir, chunk_start, symbol.nse_symbol)
         if str(local_path) in fetched or local_path.exists():
             continue
         requests += 1
     return requests
+
+
+def plan_fetch_chunks(settings: Settings, from_date: date, to_date: date) -> list[tuple[date, date]]:
+    """Breeze request windows for an inclusive range.
+
+    Inside the span of known exchange sessions (days with local candles for
+    several symbols), weekends and holidays are skipped and sessions are grouped
+    CASH_HISTORY_SESSIONS_PER_REQUEST at a time. Outside that span, where a new
+    session could not be known yet, plain CASH_HISTORY_CHUNK_DAYS windows are used.
+    """
+
+    per_request = settings.cash_history_sessions_per_request
+    if per_request < 1 or per_request * BREEZE_MAX_CANDLES_PER_SESSION > BREEZE_MAX_CANDLES_PER_REQUEST:
+        raise ValueError(f"CASH_HISTORY_SESSIONS_PER_REQUEST must be 1..{BREEZE_MAX_CANDLES_PER_REQUEST // BREEZE_MAX_CANDLES_PER_SESSION}")
+    sessions = known_trading_sessions(settings.data_dir, from_date.year, to_date.year) if settings.cash_history_use_session_calendar else ()
+    if not sessions:
+        return list(iter_date_chunks(from_date, to_date, chunk_days=settings.cash_history_chunk_days))
+
+    first_known, last_known = sessions[0], sessions[-1]
+    chunks: list[tuple[date, date]] = []
+    if from_date < first_known:
+        chunks += iter_date_chunks(from_date, min(to_date, first_known - timedelta(days=1)), chunk_days=settings.cash_history_chunk_days)
+    known = [day for day in sessions if from_date <= day <= to_date]
+    chunks += [(known[index], known[min(index + per_request, len(known)) - 1]) for index in range(0, len(known), per_request)]
+    if to_date > last_known:
+        chunks += iter_date_chunks(max(from_date, last_known + timedelta(days=1)), to_date, chunk_days=settings.cash_history_chunk_days)
+    return chunks
+
+
+@lru_cache(maxsize=8)
+def known_trading_sessions(data_dir: Path, from_year: int, to_year: int) -> tuple[date, ...]:
+    """Exchange sessions evidenced by local candles of at least a few symbols."""
+
+    inventory = scan_local_cash(data_dir, from_date=date(from_year, 1, 1), to_date=date(to_year, 12, 31))
+    return tuple(inventory.trading_calendar(min_symbols=SESSION_CALENDAR_MIN_SYMBOLS))
 
 
 def fetch_to_local_parquet(
@@ -602,7 +652,7 @@ def fetch_to_local_parquet(
 ) -> None:
     breeze = create_breeze_client(settings)
     fetched = set(manifest.fetched_files)
-    chunks = list(iter_date_chunks(from_date, to_date, chunk_days=settings.cash_history_chunk_days))
+    chunks = plan_fetch_chunks(settings, from_date, to_date)
 
     if workers == 1:
         for chunk_start, chunk_end in chunks:
@@ -655,7 +705,7 @@ def fetch_cash_chunk(
         exchange_code=settings.cash_exchange_code,
         product_type=settings.cash_product_type,
     )
-    local_files = write_cash_chunk_files(settings, symbol, local_path, rows)
+    local_files = write_cash_chunk_files(settings, symbol, chunk_start, rows)
     return CashFetchResult(local_files=tuple(str(path) for path in local_files), row_count=len(rows), existed=False)
 
 
@@ -679,30 +729,29 @@ def record_fetch_result(
 def write_cash_chunk_files(
     settings: Settings,
     symbol: EquitySymbolReference,
-    chunk_path: Path,
+    chunk_start: date,
     rows: list[Any],
 ) -> list[Path]:
-    """Keep local files date-partitioned if chunk size is raised above one day."""
+    """Write one file per trade date, plus an empty chunk-start marker when that day had no candles.
 
-    write_cash_parquet(rows, chunk_path)
-    if settings.cash_history_chunk_days == 1:
-        return [chunk_path]
+    The chunk-start file is the resumability marker, so rows are always filed by
+    their own trade_date and never under the chunk-start name.
+    """
 
     rows_by_date: dict[date, list] = {}
     for row in rows:
         rows_by_date.setdefault(row.trade_date, []).append(row)
 
-    if len(rows_by_date) <= 1:
-        return [chunk_path]
-
-    chunk_path.unlink(missing_ok=True)
     local_files: list[Path] = []
-
     for trade_date, date_rows in sorted(rows_by_date.items()):
         path = cash_local_path(settings.data_dir, trade_date, symbol.nse_symbol)
         write_cash_parquet(date_rows, path)
         local_files.append(path)
-    return local_files
+    if chunk_start not in rows_by_date:
+        marker_path = cash_local_path(settings.data_dir, chunk_start, symbol.nse_symbol)
+        write_cash_parquet([], marker_path)
+        local_files.append(marker_path)
+    return sorted(local_files)
 
 
 def upload_to_iceberg(settings: Settings, manifest: CashSyncManifest, manifest_path: Path, *, workers: int, batch_size: int) -> str:
@@ -802,20 +851,26 @@ def upload_cash_tasks(
     nse_symbol: str,
     tasks: tuple[CashUploadTask, ...],
 ) -> CashUploadResult:
-    """Append cash files in one snapshot, retrying transient catalog conflicts."""
+    """Replace cash symbol/days in one snapshot, retrying transient catalog conflicts.
+
+    Replace (delete + insert) instead of append keeps retries and re-uploads from
+    duplicating candles when snapshot source-path metadata is missing or stale.
+    """
 
     for attempt in range(1, settings.cash_upload_retry_attempts + 1):
         try:
             with _CASH_ICEBERG_APPEND_LOCK:
-                iceberg.append_parquet_files(
+                iceberg.replace_parquet_files(
                     market_type,
                     [task.local_path for task in tasks],
+                    nse_symbol=nse_symbol,
+                    trade_dates=[task.trade_date for task in tasks],
                     snapshot_properties={
                         "tick_ticker.nse_symbol": nse_symbol,
                         "tick_ticker.trade_date_from": min(task.trade_date for task in tasks).isoformat(),
                         "tick_ticker.trade_date_to": max(task.trade_date for task in tasks).isoformat(),
                         "tick_ticker.source_paths": json.dumps([task.local_file for task in tasks], separators=(",", ":")),
-                        "tick_ticker.write_mode": "append",
+                        "tick_ticker.write_mode": "replace",
                     },
                 )
             return CashUploadResult(tasks=tasks, committed=True)

@@ -1,0 +1,26 @@
+action_id,security_id,action_type,ex_date,effective_date,ratio,related_security_id,description,source_url,verification
+CAIRN-2017-merger,CAIRN,merger,,2017-04-26,,VEDL,Cairn India merged into Vedanta; last traded 2017-04-25,,unverified
+GRASIM-2017-scheme,GRASIM,merger,,2017-05-26,,,Aditya Birla Nuvo merged into Grasim then financial services demerged; Grasim replaced by VEDL in NIFTY 50,https://www.niftyindices.com/Press_Release/ind_prs27042017.pdf,verified
+INDUSTOWER-2020-rename,INDUSTOWER,rename,,2020-12-18,,,Bharti Infratel merged with Indus Towers and renamed; symbol INFRATEL -> INDUSTOWER,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,verified
+TATACONSUM-2020-rename,TATACONSUM,rename,,2020-02-27,,,Tata Global Beverages renamed Tata Consumer Products; symbol TATAGLOBAL -> TATACONSUM,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,verified
+TATASTEEL-2022-split,TATASTEEL,split,2022-07-28,2022-07-29,1:10,,Face value split 10 -> 1,,news
+BAJAJFINSV-2022-split-bonus,BAJAJFINSV,split,2022-09-13,2022-09-14,1:5 split + 1:1 bonus,,Split and bonus on the same record date,,news
+LTM-2022-rename,LTM,rename,,2022-12-05,,,Mindtree merged into L&T Infotech; symbol LTI -> LTIM,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,verified
+SHRIRAMFIN-2022-rename,SHRIRAMFIN,rename,,2022-12-20,,,Shriram Transport Finance renamed Shriram Finance; symbol SRTRANSFIN -> SHRIRAMFIN,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,verified
+HDFC-2023-merger,HDFC,merger,2023-07-13,2023-07-01,42 HDFCBANK : 25 HDFC,HDFCBANK,HDFC merged into HDFC Bank; last trading day 2023-07-12; suspended and record date 2023-07-13; LTIM replaced HDFC in NIFTY 50 from 2023-07-13,https://www.niftyindices.com/Press_Release/ind_prs04072023.pdf,verified
+RELIANCE-2023-demerger,RELIANCE,demerger,2023-07-20,2023-07-20,1 JIOFIN : 1 RELIANCE,JIOFIN,Reliance Strategic Investments (Jio Financial Services) demerged; placeholder in NIFTY 50 2023-07-20..2023-09-06; listed 2023-08-21,https://www.niftyindices.com/Press_Release/ind_prs17072023.pdf,verified
+NESTLEIND-2024-split,NESTLEIND,split,2024-01-05,2024-01-05,1:10,,Face value split 10 -> 1; ISIN INE239A01016 -> INE239A01024 (ISIN change unverified),,news
+SAMMAANCAP-2024-rename,SAMMAANCAP,rename,,2024-07-26,,,Indiabulls Housing Finance renamed Sammaan Capital; symbol IBULHSGFIN -> SAMMAANCAP,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,verified
+TATAMTRDVR-2024-cancellation,TATAMTRDVR,delisting,2024-08-30,2024-08-30,7 TATAMOTORS : 10 DVR,TMPV,DVR shares cancelled for ordinary shares; last traded 2024-08-29,,news
+RELIANCE-2024-bonus,RELIANCE,bonus,2024-10-28,2024-10-28,1:1,,Bonus issue,,news
+WIPRO-2024-bonus,WIPRO,bonus,2024-12-03,2024-12-03,1:1,,Bonus issue,,news
+ITC-2025-demerger,ITC,demerger,2025-01-06,2025-01-06,1 ITCHOTELS : 10 ITC,ITCHOTELS,ITC Hotels demerged; placeholder DUMMYITC in NIFTY 50 2025-01-06..2025-02-07; listed 2025-01-29,https://www.niftyindices.com/Press_Release/ind_prs30122024.pdf,verified
+SHRIRAMFIN-2025-split,SHRIRAMFIN,split,2025-01-10,2025-01-10,1:5,,Face value split,,news
+ETERNAL-2025-rename,ETERNAL,rename,,2025-04-09,,,Zomato renamed Eternal; symbol ZOMATO -> ETERNAL while in NIFTY 50,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,verified
+BAJFINANCE-2025-split-bonus,BAJFINANCE,split,2025-06-16,2025-06-16,1:2 split + 4:1 bonus,,Split and bonus on the same record date,,news
+NESTLEIND-2025-bonus,NESTLEIND,bonus,2025-08-08,2025-08-08,1:1,,Bonus issue,,news
+HDFCBANK-2025-bonus,HDFCBANK,bonus,2025-08-27,2025-08-27,1:1,,Bonus issue,,news
+TMPV-2025-demerger,TMPV,demerger,2025-10-14,2025-10-01,1 TMCV : 1 TATAMOTORS,TMCV,Commercial vehicles business demerged as new Tata Motors Ltd (TMCV); placeholder DUMMYTATAM in NIFTY 50 2025-10-14..2025-11-14; TMCV listed 2025-11-12,https://www.niftyindices.com/Press_Release/ind_prs07102025.pdf,verified
+TMPV-2025-rename,TMPV,rename,,2025-10-24,,,Tata Motors renamed Tata Motors Passenger Vehicles; symbol TATAMOTORS -> TMPV while in NIFTY 50,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,verified
+KOTAKBANK-2026-split,KOTAKBANK,split,2026-01-14,2026-01-14,1:5,,Face value split,,news
+LTM-2026-rename,LTM,rename,,2026-02-27,,,LTIMindtree symbol LTIM -> LTM; company renamed LTM Ltd 2026-03-17,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,verified

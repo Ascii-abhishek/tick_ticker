@@ -1,0 +1,167 @@
+security_id,provider,instrument_key,valid_from,valid_to,availability,verified_on,notes
+ACC,upstox,NSE_EQ|INE012A01025,2022-01-01,,verified,2026-09-21,minute candles present locally
+ACC,breeze,ACC,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ADANIENT,upstox,NSE_EQ|INE423A01024,2022-01-01,,verified,2026-09-21,minute candles present locally
+ADANIENT,breeze,ADAENT,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ADANIPORTS,upstox,NSE_EQ|INE742F01042,2022-01-01,,verified,2026-09-21,minute candles present locally
+ADANIPORTS,breeze,ADAPOR,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+AMBUJACEM,upstox,NSE_EQ|INE079A01024,2022-01-01,,verified,2026-09-21,minute candles present locally
+AMBUJACEM,breeze,AMBCE,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+APOLLOHOSP,upstox,NSE_EQ|INE437A01024,2022-01-01,,verified,2026-09-21,minute candles present locally
+APOLLOHOSP,breeze,APOHOS,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ASIANPAINT,upstox,NSE_EQ|INE021A01026,2022-01-01,,verified,2026-09-21,minute candles present locally
+ASIANPAINT,breeze,ASIPAI,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+AUROPHARMA,upstox,NSE_EQ|INE406A01037,2022-01-01,,verified,2026-09-21,minute candles present locally
+AUROPHARMA,breeze,AURPHA,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+AXISBANK,upstox,NSE_EQ|INE238A01034,2022-01-01,,verified,2026-09-21,minute candles present locally
+AXISBANK,breeze,AXIBAN,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BAJAJ-AUTO,upstox,NSE_EQ|INE917I01010,2022-01-01,,verified,2026-09-21,minute candles present locally
+BAJAJ-AUTO,breeze,BAAUTO,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BAJAJFINSV,upstox,NSE_EQ|INE918I01026,2022-01-01,,verified,2026-09-21,minute candles present locally
+BAJAJFINSV,breeze,BAFINS,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BAJFINANCE,upstox,NSE_EQ|INE296A01032,2022-01-01,,verified,2026-09-21,minute candles present locally
+BAJFINANCE,breeze,BAJFI,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BANKBARODA,upstox,NSE_EQ|INE028A01039,2022-01-01,,verified,2026-09-21,minute candles present locally
+BANKBARODA,breeze,BANBAR,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BEL,upstox,NSE_EQ|INE263A01024,2022-01-01,,verified,2026-09-21,minute candles present locally
+BEL,breeze,BHAELE,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BHARTIARTL,upstox,NSE_EQ|INE397D01024,2022-01-01,,verified,2026-09-21,minute candles present locally
+BHARTIARTL,breeze,BHAAIR,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BHEL,upstox,NSE_EQ|INE257A01026,2022-01-01,,verified,2026-09-21,minute candles present locally
+BHEL,breeze,BHEL,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BOSCHLTD,upstox,NSE_EQ|INE323A01026,2022-01-01,,verified,2026-09-21,minute candles present locally
+BOSCHLTD,breeze,BOSLIM,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BPCL,upstox,NSE_EQ|INE029A01011,2022-01-01,,verified,2026-09-21,minute candles present locally
+BPCL,breeze,BHAPET,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BRITANNIA,upstox,NSE_EQ|INE216A01030,2022-01-01,,verified,2026-09-21,minute candles present locally
+BRITANNIA,breeze,BRIIND,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+BSE,upstox,NSE_EQ|INE118H01025,2022-01-01,,verified,2026-09-21,minute candles present locally
+BSE,breeze,BSEI,2017-02-03,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+CAIRN,upstox,NSE_EQ|INE910H01017,2022-01-01,,unavailable,2026-09-21,"delisted 2017, before the Upstox minute-history floor (2022-01-01)"
+CAIRN,breeze,CAIIND,2016-01-01,2017-04-26,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+CIPLA,upstox,NSE_EQ|INE059A01026,2022-01-01,,verified,2026-09-21,minute candles present locally
+CIPLA,breeze,CIPLA,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+COALINDIA,upstox,NSE_EQ|INE522F01014,2022-01-01,,verified,2026-09-21,minute candles present locally
+COALINDIA,breeze,COALIN,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+DIVISLAB,upstox,NSE_EQ|INE361B01024,2022-01-01,,verified,2026-09-21,minute candles present locally
+DIVISLAB,breeze,DIVLAB,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+DRREDDY,upstox,NSE_EQ|INE089A01031,2022-01-01,,verified,2026-09-21,minute candles present locally
+DRREDDY,breeze,DRREDD,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+EICHERMOT,upstox,NSE_EQ|INE066A01021,2022-01-01,,verified,2026-09-21,minute candles present locally
+EICHERMOT,breeze,EICMOT,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ETERNAL,upstox,NSE_EQ|INE758T01015,2022-01-01,,verified,2026-09-21,minute candles present locally
+ETERNAL,breeze,ZOMLIM,2021-07-23,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+GAIL,upstox,NSE_EQ|INE129A01019,2022-01-01,,verified,2026-09-21,minute candles present locally
+GAIL,breeze,GAIL,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+GRASIM,upstox,NSE_EQ|INE047A01021,2022-01-01,,verified,2026-09-21,minute candles present locally
+GRASIM,breeze,GRASIM,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+HCLTECH,upstox,NSE_EQ|INE860A01027,2022-01-01,,verified,2026-09-21,minute candles present locally
+HCLTECH,breeze,HCLTEC,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+HDFC,upstox,NSE_EQ|INE001A01036,2022-01-01,2023-07-13,unavailable,2026-09-21,"Upstox rejects the delisted ISIN (UDAPI100011), probed 2026-09-21"
+HDFC,breeze,HDFC,2016-01-01,2023-07-13,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+HDFCBANK,upstox,NSE_EQ|INE040A01034,2022-01-01,,verified,2026-09-21,minute candles present locally
+HDFCBANK,breeze,HDFBAN,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+HDFCLIFE,upstox,NSE_EQ|INE795G01014,2022-01-01,,verified,2026-09-21,minute candles present locally
+HDFCLIFE,breeze,HDFSTA,2017-11-17,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+HEROMOTOCO,upstox,NSE_EQ|INE158A01026,2022-01-01,,verified,2026-09-21,minute candles present locally
+HEROMOTOCO,breeze,HERHON,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+HINDALCO,upstox,NSE_EQ|INE038A01020,2022-01-01,,verified,2026-09-21,minute candles present locally
+HINDALCO,breeze,HINDAL,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+HINDPETRO,upstox,NSE_EQ|INE094A01015,2022-01-01,,verified,2026-09-21,minute candles present locally
+HINDPETRO,breeze,HINPET,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+HINDUNILVR,upstox,NSE_EQ|INE030A01027,2022-01-01,,verified,2026-09-21,minute candles present locally
+HINDUNILVR,breeze,HINLEV,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ICICIBANK,upstox,NSE_EQ|INE090A01021,2022-01-01,,verified,2026-09-21,minute candles present locally
+ICICIBANK,breeze,ICIBAN,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+IDEA,upstox,NSE_EQ|INE669E01016,2022-01-01,,verified,2026-09-21,minute candles present locally
+IDEA,breeze,IDECEL,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+INDIGO,upstox,NSE_EQ|INE646L01027,2022-01-01,,verified,2026-09-21,minute candles present locally
+INDIGO,breeze,INTAVI,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+INDUSINDBK,upstox,NSE_EQ|INE095A01012,2022-01-01,,verified,2026-09-21,minute candles present locally
+INDUSINDBK,breeze,INDBA,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+INDUSTOWER,upstox,NSE_EQ|INE121J01017,2022-01-01,,verified,2026-09-21,minute candles present locally
+INDUSTOWER,breeze,BHAINF,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+INFY,upstox,NSE_EQ|INE009A01021,2022-01-01,,verified,2026-09-21,minute candles present locally
+INFY,breeze,INFTEC,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+IOC,upstox,NSE_EQ|INE242A01010,2022-01-01,,verified,2026-09-21,minute candles present locally
+IOC,breeze,INDOIL,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ITC,upstox,NSE_EQ|INE154A01025,2022-01-01,,verified,2026-09-21,minute candles present locally
+ITC,breeze,ITC,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ITCHOTELS,upstox,NSE_EQ|INE379A01028,2025-01-29,,verified,2026-09-21,probed 2026-09-21: candles returned from listing date
+ITCHOTELS,breeze,ITCHOT,2025-01-29,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+JIOFIN,upstox,NSE_EQ|INE758E01017,2023-08-21,,verified,2026-09-21,minute candles present locally
+JIOFIN,breeze,JIOFIN,2023-08-21,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+JSWSTEEL,upstox,NSE_EQ|INE019A01038,2022-01-01,,verified,2026-09-21,minute candles present locally
+JSWSTEEL,breeze,JSWSTE,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+KOTAKBANK,upstox,NSE_EQ|INE237A01036,2022-01-01,,verified,2026-09-21,minute candles present locally
+KOTAKBANK,breeze,KOTMAH,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+LT,upstox,NSE_EQ|INE018A01030,2022-01-01,,verified,2026-09-21,minute candles present locally
+LT,breeze,LARTOU,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+LTM,upstox,NSE_EQ|INE214T01019,2022-01-01,,verified,2026-09-21,minute candles present locally
+LTM,breeze,LTINFO,2016-07-21,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+LUPIN,upstox,NSE_EQ|INE326A01037,2022-01-01,,verified,2026-09-21,minute candles present locally
+LUPIN,breeze,LUPIN,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+M&M,upstox,NSE_EQ|INE101A01026,2022-01-01,,verified,2026-09-21,minute candles present locally
+M&M,breeze,MAHMAH,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+MARUTI,upstox,NSE_EQ|INE585B01010,2022-01-01,,verified,2026-09-21,minute candles present locally
+MARUTI,breeze,MARUTI,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+MAXHEALTH,upstox,NSE_EQ|INE027H01010,2022-01-01,,verified,2026-09-21,minute candles present locally
+MAXHEALTH,breeze,MAXHEA,2020-08-21,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+NESTLEIND,upstox,NSE_EQ|INE239A01024,2022-01-01,,verified,2026-09-21,minute candles present locally
+NESTLEIND,breeze,NESIND,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+NTPC,upstox,NSE_EQ|INE733E01010,2022-01-01,,verified,2026-09-21,minute candles present locally
+NTPC,breeze,NTPC,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ONGC,upstox,NSE_EQ|INE213A01029,2022-01-01,,verified,2026-09-21,minute candles present locally
+ONGC,breeze,ONGC,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+PNB,upstox,NSE_EQ|INE160A01022,2022-01-01,,verified,2026-09-21,minute candles present locally
+PNB,breeze,PUNBAN,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+POWERGRID,upstox,NSE_EQ|INE752E01010,2022-01-01,,verified,2026-09-21,minute candles present locally
+POWERGRID,breeze,POWGRI,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+RELIANCE,upstox,NSE_EQ|INE002A01018,2022-01-01,,verified,2026-09-21,minute candles present locally
+RELIANCE,breeze,RELIND,2016-01-01,,verified,2026-09-21,minute candles present locally
+SAMMAANCAP,upstox,NSE_EQ|INE148I01020,2022-01-01,,verified,2026-09-21,minute candles present locally
+SAMMAANCAP,breeze,INDHO,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+SBILIFE,upstox,NSE_EQ|INE123W01016,2022-01-01,,verified,2026-09-21,minute candles present locally
+SBILIFE,breeze,SBILIF,2017-10-03,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+SBIN,upstox,NSE_EQ|INE062A01020,2022-01-01,,verified,2026-09-21,minute candles present locally
+SBIN,breeze,STABAN,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+SHREECEM,upstox,NSE_EQ|INE070A01015,2022-01-01,,verified,2026-09-21,minute candles present locally
+SHREECEM,breeze,SHRCEM,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+SHRIRAMFIN,upstox,NSE_EQ|INE721A01047,2022-01-01,,verified,2026-09-21,minute candles present locally
+SHRIRAMFIN,breeze,SHRTRA,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+SUNPHARMA,upstox,NSE_EQ|INE044A01036,2022-01-01,,verified,2026-09-21,minute candles present locally
+SUNPHARMA,breeze,SUNPHA,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TATACONSUM,upstox,NSE_EQ|INE192A01025,2022-01-01,,verified,2026-09-21,minute candles present locally
+TATACONSUM,breeze,TATGLO,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TATAMTRDVR,upstox,NSE_EQ|IN9155A01020,2022-01-01,2024-08-30,unavailable,2026-09-21,"Upstox rejects the delisted ISIN (UDAPI100011), probed 2026-09-21"
+TATAMTRDVR,breeze,TMLDVR,2016-01-01,2024-08-30,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TATAPOWER,upstox,NSE_EQ|INE245A01021,2022-01-01,,verified,2026-09-21,minute candles present locally
+TATAPOWER,breeze,TATPOW,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TATASTEEL,upstox,NSE_EQ|INE081A01020,2022-01-01,,verified,2026-09-21,minute candles present locally
+TATASTEEL,breeze,TATSTE,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TCS,upstox,NSE_EQ|INE467B01029,2022-01-01,,verified,2026-09-21,minute candles present locally
+TCS,breeze,TCS,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TECHM,upstox,NSE_EQ|INE669C01036,2022-01-01,,verified,2026-09-21,minute candles present locally
+TECHM,breeze,TECMAH,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TITAN,upstox,NSE_EQ|INE280A01028,2022-01-01,,verified,2026-09-21,minute candles present locally
+TITAN,breeze,TITIND,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TMCV,upstox,NSE_EQ|INE1TAE01010,2025-11-12,,verified,2026-09-21,probed 2026-09-21: candles returned from listing date
+TMCV,breeze,TATCOV,2025-11-12,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TMPV,upstox,NSE_EQ|INE155A01022,2022-01-01,,verified,2026-09-21,minute candles present locally
+TMPV,breeze,TATMOT,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+TRENT,upstox,NSE_EQ|INE849A01020,2022-01-01,,verified,2026-09-21,minute candles present locally
+TRENT,breeze,TRENT,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ULTRACEMCO,upstox,NSE_EQ|INE481G01011,2022-01-01,,verified,2026-09-21,minute candles present locally
+ULTRACEMCO,breeze,ULTCEM,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+UPL,upstox,NSE_EQ|INE628A01036,2022-01-01,,verified,2026-09-21,minute candles present locally
+UPL,breeze,UNIP,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+VEDL,upstox,NSE_EQ|INE205A01025,2022-01-01,,verified,2026-09-21,minute candles present locally
+VEDL,breeze,VEDLIM,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+WIPRO,upstox,NSE_EQ|INE075A01022,2022-01-01,,verified,2026-09-21,minute candles present locally
+WIPRO,breeze,WIPRO,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+YESBANK,upstox,NSE_EQ|INE528G01035,2022-01-01,,verified,2026-09-21,minute candles present locally
+YESBANK,breeze,YESBAN,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+ZEEL,upstox,NSE_EQ|INE256A01028,2022-01-01,,verified,2026-09-21,minute candles present locally
+ZEEL,breeze,ZEEENT,2016-01-01,,unverified,,verify on first Breeze fetch (session expired 2026-09-21)
+NIFTY,upstox,NSE_INDEX|Nifty 50,2022-01-01,,verified,2026-09-21,minute candles present locally
+NIFTY,breeze,NIFTY,2016-01-01,,verified,2026-09-21,minute candles present locally

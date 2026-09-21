@@ -366,7 +366,17 @@ def parse_args() -> argparse.Namespace:
         "--from-date",
         help="Inclusive start date, YYYY-MM-DD. Defaults to CASH_SYNC_FROM_DATE, sync state, or the Upstox start date.",
     )
-    parser.add_argument("--to-date", help="Inclusive end date, YYYY-MM-DD. Defaults to CASH_SYNC_TO_DATE or today.")
+    parser.add_argument("--to-date", help="Inclusive end date, YYYY-MM-DD. Defaults to CASH_SYNC_TO_DATE or yesterday (IST); later dates are clamped to yesterday.")
+    parser.add_argument(
+        "--synced-only",
+        action="store_true",
+        help="With --all: only symbols that already have sync state (daily updates; skips never-synced backfills).",
+    )
+    parser.add_argument(
+        "--ignore-listing-date",
+        action="store_true",
+        help="Clamp only to the Upstox history floor, not listing_date. For ISIN changes where NSE resets the listing date (NESTLEIND).",
+    )
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch Upstox data into local Parquet.")
     parser.add_argument("--local-only", action="store_true", help="Only download local Parquet; do not upload to Iceberg or update sync state.")
     parser.add_argument("--upload-only", action="store_true", help="Only upload existing local Parquet files to Iceberg and mark D1.")
@@ -477,7 +487,11 @@ def resolve_upstox_from_date(
     else:
         resolved = provider_start_date
 
-    earliest_date = max(provider_start_date, symbol.listing_date or provider_start_date)
+    # NSE's "date of listing" moves when an ISIN changes (NESTLEIND shows
+    # 2023-08-01 after its split) while Upstox serves the older candles under
+    # the current ISIN; --ignore-listing-date lets such symbols go below it.
+    ignore_listing_date = getattr(args, "ignore_listing_date", False)
+    earliest_date = provider_start_date if ignore_listing_date else max(provider_start_date, symbol.listing_date or provider_start_date)
     if resolved < earliest_date:
         logger.info(
             "cash_upstox_from_date_clamped symbol=%s requested_from_date=%s earliest_date=%s",

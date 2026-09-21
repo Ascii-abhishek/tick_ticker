@@ -255,3 +255,12 @@ def test_write_upstox_cash_chunk_files_splits_daily_and_writes_marker(tmp_path: 
     assert resumed.existed
     assert resumed.local_files == tuple(str(path) for path in paths)
     assert resumed.row_count == 2
+
+
+def test_ignore_listing_date_clamps_only_to_provider_floor() -> None:
+    args = Args()
+    args.from_date = "2016-01-01"
+    args.ignore_listing_date = True
+    symbol = EquitySymbolReference(nse_symbol="NESTLEIND", breeze_code="NESIND", listing_date=date(2023, 8, 1))
+
+    assert resolve_upstox_from_date(symbol, None, Settings(_env_file=None), args) == date(2022, 1, 1)

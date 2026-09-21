@@ -17,6 +17,8 @@ The script ensures Iceberg namespaces/tables exist in the configured R2 bucket:
 - `options.ohlcv`
 - `future.ohlcv`
 
+The knowledge base starts at [`docs/README.md`](docs/README.md). It has market docs (NIFTY 50 membership, corporate actions, synthetic volume, provider quirks) and engineering docs (pipeline, D1 schema, audit, cron, backfill, decisions). The summary of the 2026-09 NIFTY volume work is [`docs/engineering/work-summary-2026-09.md`](docs/engineering/work-summary-2026-09.md).
+
 Practical docs live in `docs/`:
 
 - `docs/credentials.md`
@@ -157,6 +159,17 @@ Reconcile local JSON manifests and D1 state from local Parquet coverage:
 ```bash
 uv run reconcile-cash-sync-state
 ```
+
+## NIFTY 50 Reference Data and Synthetic Volume
+
+```bash
+uv run load-reference-data --apply-migration      # reference/*.csv -> D1 (validated)
+uv run repair-cash-data --from-date 2022-01-01    # audit gaps against the trading calendar
+uv run generate-index-volume --from-date 2022-01-01 --publish
+scripts/daily_cash_sync.sh                        # daily cron: sync, repair, volume
+```
+
+See `docs/engineering/pipeline-overview.md`.
 
 ## Cash 1-Second Sync
 

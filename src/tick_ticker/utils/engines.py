@@ -174,6 +174,11 @@ class UpstoxClient:
             self.__class__._last_request_at = time.monotonic()
 
 
+D1_RETRY_ATTEMPTS = 4
+D1_RETRY_BASE_DELAY_SECONDS = 2.0
+D1_RETRY_STATUS_CODES = frozenset({401, 429, 500, 502, 503, 504})
+
+
 class D1Client:
     """Cloudflare D1 SQL API client."""
 
@@ -188,18 +193,34 @@ class D1Client:
         )
 
     def query(self, sql: str, params: Sequence[Any] | None = None) -> list[dict[str, Any]]:
-        """Execute SQL and return rows."""
+        """Execute SQL and return rows.
+
+        Transport errors, 401, 429 and 5xx are retried: the API has returned
+        one-off 401s mid-run. Statements used here are upserts or reads, so a
+        retry after an unacknowledged success is harmless.
+        """
 
         payload: dict[str, Any] = {"sql": sql}
         if params is not None:
             payload["params"] = list(params)
 
-        response = httpx.post(
-            self._url,
-            headers={"Authorization": f"Bearer {self.settings.cloudflare_api_token}"},
-            json=payload,
-            timeout=self.timeout_seconds,
-        )
+        for attempt in range(1, D1_RETRY_ATTEMPTS + 1):
+            try:
+                response = httpx.post(
+                    self._url,
+                    headers={"Authorization": f"Bearer {self.settings.cloudflare_api_token}"},
+                    json=payload,
+                    timeout=self.timeout_seconds,
+                )
+            except httpx.TransportError:
+                if attempt == D1_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(D1_RETRY_BASE_DELAY_SECONDS * attempt)
+                continue
+            if response.status_code in D1_RETRY_STATUS_CODES and attempt < D1_RETRY_ATTEMPTS:
+                time.sleep(D1_RETRY_BASE_DELAY_SECONDS * attempt)
+                continue
+            break
         if response.status_code >= 400:
             raise RuntimeError(f"D1 HTTP {response.status_code}: {response.text}")
 

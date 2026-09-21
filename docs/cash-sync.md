@@ -115,6 +115,15 @@ Resume behavior:
 - After a completed upload, a later date range resets the manifest for the new incremental run.
 - Failed symbols stay retryable.
 
+Changes from 2026-09 (see [pipeline overview](engineering/pipeline-overview.md)):
+
+- `--to-date` defaults to, and is clamped to, **yesterday in IST**. Fetching the running session used to write empty/partial files that later runs skipped.
+- Iceberg uploads **replace** the symbol/days they cover (delete + insert) instead of appending, so re-uploads cannot duplicate candles.
+- `sync-cash-upstox-data --all --synced-only` updates only symbols that already have sync state (daily cron).
+- `sync-cash-upstox-data --ignore-listing-date` lets `--from-date` go below `listing_date` (NESTLEIND: NSE resets the listing date on ISIN changes).
+- Breeze requests group 2 known sessions per request and skip weekends/holidays (`CASH_HISTORY_SESSIONS_PER_REQUEST`, `CASH_HISTORY_USE_SESSION_CALENDAR`). Rows are always filed by their own trade date.
+- Use `repair-cash-data` to find and fix gaps; D1 `completed` status alone does not prove coverage.
+
 Safety:
 
 - Default max range is `CASH_SYNC_MAX_DAYS_PER_RUN`.

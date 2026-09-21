@@ -1,7 +1,7 @@
 import sqlite3
 import threading
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -26,7 +26,7 @@ from tick_ticker.scripts.sync_cash_data import (
     upload_to_iceberg,
     validate_date_range,
 )
-from tick_ticker.services.cash_data import CashSyncManifest, cash_local_path, transform_cash_payload, write_cash_parquet
+from tick_ticker.services.cash_data import CashOHLCV, CashSyncManifest, cash_local_path, read_cash_row_count, transform_cash_payload, write_cash_parquet
 
 
 class Args:
@@ -158,8 +158,10 @@ def test_due_cash_symbols_include_unsynced_and_stale_completed_symbols() -> None
     )
 
     symbols = MarketDataSyncStateRepository(client).due_cash_symbols(target_to_date=date(2026, 1, 10))
+    synced = MarketDataSyncStateRepository(client).due_cash_symbols(target_to_date=date(2026, 1, 10), synced_only=True)
 
     assert [symbol.nse_symbol for symbol in symbols] == ["AAA", "BBB"]
+    assert [symbol.nse_symbol for symbol in synced] == ["BBB"]
 
 
 def test_sync_resolved_symbols_skips_large_ranges_during_all_runs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -408,7 +410,7 @@ def test_upload_to_iceberg_appends_uncommitted_source_path(monkeypatch: pytest.M
         def committed_source_paths(self, market_type: str) -> set[str]:
             return set()
 
-        def append_parquet_files(self, market_type: str, paths: list[Path], *, snapshot_properties: dict[str, str]) -> None:
+        def replace_parquet_files(self, market_type: str, paths: list[Path], *, nse_symbol: str, trade_dates: list, snapshot_properties: dict[str, str]) -> None:
             calls.append((market_type, paths, snapshot_properties))
 
     monkeypatch.setattr("tick_ticker.scripts.sync_cash_data.IcebergMarketDataCatalog", FakeCatalog)
@@ -422,7 +424,7 @@ def test_upload_to_iceberg_appends_uncommitted_source_path(monkeypatch: pytest.M
     assert calls[0][2]["tick_ticker.trade_date_from"] == "2026-01-02"
     assert calls[0][2]["tick_ticker.trade_date_to"] == "2026-01-02"
     assert calls[0][2]["tick_ticker.source_paths"] == f'["{parquet_path}"]'
-    assert calls[0][2]["tick_ticker.write_mode"] == "append"
+    assert calls[0][2]["tick_ticker.write_mode"] == "replace"
     assert CashSyncManifest.load(manifest_path).uploaded_files == [str(parquet_path)]
 
 
@@ -471,7 +473,7 @@ def test_upload_to_iceberg_splits_failed_batch(monkeypatch: pytest.MonkeyPatch, 
         def committed_source_paths(self, market_type: str) -> set[str]:
             return set()
 
-        def append_parquet_files(self, market_type: str, paths: list[Path], *, snapshot_properties: dict[str, str]) -> None:
+        def replace_parquet_files(self, market_type: str, paths: list[Path], *, nse_symbol: str, trade_dates: list, snapshot_properties: dict[str, str]) -> None:
             calls.append(paths)
             if len(paths) > 1:
                 raise OSError("NO_SUCH_UPLOAD")
@@ -511,7 +513,7 @@ def test_upload_cash_tasks_serializes_cash_iceberg_commits(tmp_path: Path) -> No
     lock = threading.Lock()
 
     class FakeCatalog:
-        def append_parquet_files(self, market_type: str, paths: list[Path], *, snapshot_properties: dict[str, str]) -> None:
+        def replace_parquet_files(self, market_type: str, paths: list[Path], *, nse_symbol: str, trade_dates: list, snapshot_properties: dict[str, str]) -> None:
             nonlocal active, max_active
             with lock:
                 active += 1
@@ -605,7 +607,7 @@ def test_upload_to_iceberg_marks_already_committed_source_path(monkeypatch: pyte
         def committed_source_paths(self, market_type: str) -> set[str]:
             return {str(parquet_path)}
 
-        def append_parquet_files(self, market_type: str, paths: list[Path], *, snapshot_properties: dict[str, str]) -> None:
+        def replace_parquet_files(self, market_type: str, paths: list[Path], *, nse_symbol: str, trade_dates: list, snapshot_properties: dict[str, str]) -> None:
             calls.append((market_type, paths, snapshot_properties))
 
     monkeypatch.setattr("tick_ticker.scripts.sync_cash_data.IcebergMarketDataCatalog", FakeCatalog)
@@ -614,3 +616,68 @@ def test_upload_to_iceberg_marks_already_committed_source_path(monkeypatch: pyte
 
     assert calls == []
     assert CashSyncManifest.load(manifest_path).uploaded_files == [str(parquet_path)]
+
+
+def test_plan_fetch_chunks_groups_known_sessions_and_falls_back_outside(tmp_path: Path) -> None:
+    from tick_ticker.scripts.sync_cash_data import known_trading_sessions, plan_fetch_chunks
+
+    sessions = [date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 6), date(2020, 1, 7), date(2020, 1, 8)]
+    for day in sessions:
+        for symbol in ("AAA", "BBB", "CCC"):
+            write_cash_parquet(
+                [
+                    CashOHLCV(
+                        datetime=datetime(day.year, day.month, day.day, 9, 15),
+                        trade_date=day,
+                        nse_symbol=symbol,
+                        exchange_code="NSE",
+                        product_type="cash",
+                        open=1,
+                        high=1,
+                        low=1,
+                        close=1,
+                        volume=1,
+                        ingested_at=datetime(2026, 1, 1),
+                    )
+                ],
+                cash_local_path(tmp_path, day, symbol),
+            )
+    known_trading_sessions.cache_clear()
+    settings = Settings(data_dir=tmp_path, _env_file=None)
+
+    chunks = plan_fetch_chunks(settings, date(2020, 1, 1), date(2020, 1, 10))
+
+    assert chunks == [
+        (date(2020, 1, 1), date(2020, 1, 1)),
+        (date(2020, 1, 2), date(2020, 1, 3)),
+        (date(2020, 1, 6), date(2020, 1, 7)),
+        (date(2020, 1, 8), date(2020, 1, 8)),
+        (date(2020, 1, 9), date(2020, 1, 9)),
+        (date(2020, 1, 10), date(2020, 1, 10)),
+    ]
+
+
+def test_write_cash_chunk_files_files_rows_by_trade_date_and_marks_empty_start(tmp_path: Path) -> None:
+    from tick_ticker.scripts.sync_cash_data import write_cash_chunk_files
+
+    monday = date(2020, 1, 6)
+    row = CashOHLCV(
+        datetime=datetime(2020, 1, 6, 9, 15),
+        trade_date=monday,
+        nse_symbol="AAA",
+        exchange_code="NSE",
+        product_type="cash",
+        open=1,
+        high=1,
+        low=1,
+        close=1,
+        volume=1,
+        ingested_at=datetime(2026, 1, 1),
+    )
+    symbol = EquitySymbolReference(nse_symbol="AAA", breeze_code="AAA")
+
+    paths = write_cash_chunk_files(Settings(data_dir=tmp_path, _env_file=None), symbol, date(2020, 1, 5), [row])
+
+    assert paths == [cash_local_path(tmp_path, date(2020, 1, 5), "AAA"), cash_local_path(tmp_path, monday, "AAA")]
+    assert read_cash_row_count(paths[0]) == 0
+    assert read_cash_row_count(paths[1]) == 1

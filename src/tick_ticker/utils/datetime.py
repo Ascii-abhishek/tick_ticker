@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import Iterator
 
 
@@ -46,6 +46,28 @@ def breeze_datetime(value: date | datetime, *, end_of_day: bool = False) -> str:
     else:
         dt = datetime.combine(value, time.max if end_of_day else time.min)
     return dt.replace(microsecond=0).isoformat() + ".000Z"
+
+
+IST = timezone(timedelta(hours=5, minutes=30), name="IST")
+
+
+def ist_today(now: datetime | None = None) -> date:
+    """Current calendar date on the exchange clock (Asia/Kolkata)."""
+
+    current = now or datetime.now(tz=UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return current.astimezone(IST).date()
+
+
+def last_completed_session_bound(now: datetime | None = None) -> date:
+    """Latest date whose historical candles can be treated as final: yesterday IST.
+
+    Fetching the current session writes partial or empty days that incremental
+    runs then skip forever, so syncs stop one day before the exchange date.
+    """
+
+    return ist_today(now) - timedelta(days=1)
 
 
 def utc_now() -> datetime:

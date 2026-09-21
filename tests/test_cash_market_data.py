@@ -114,3 +114,13 @@ def test_write_cash_parquet_uses_expected_schema(tmp_path: Path) -> None:
         "count",
         "ingested_at",
     ]
+
+
+def test_last_completed_session_bound_uses_ist_calendar() -> None:
+    from datetime import datetime
+
+    from tick_ticker.utils.datetime import last_completed_session_bound
+
+    # 2026-09-21 20:00 UTC is already 2026-09-22 01:30 IST.
+    assert last_completed_session_bound(datetime(2026, 9, 21, 20, 0)) == date(2026, 9, 21)
+    assert last_completed_session_bound(datetime(2026, 9, 21, 10, 0)) == date(2026, 9, 20)

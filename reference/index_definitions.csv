@@ -1,0 +1,2 @@
+index_code,storage_symbol,name,target_constituents,methodology_url,notes
+NIFTY50,NIFTY,NIFTY 50,50,https://www.niftyindices.com/Methodology/Method_NIFTY_Equity_Indices.pdf,"50 companies; DVR share classes and demerger placeholders can make 51 securities"

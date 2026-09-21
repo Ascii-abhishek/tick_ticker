@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 import json
@@ -11,7 +12,7 @@ from typing import Literal
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pyiceberg.catalog.rest import RestCatalog
-from pyiceberg.expressions import And, EqualTo
+from pyiceberg.expressions import And, BooleanExpression, EqualTo, GreaterThanOrEqual, In, LessThanOrEqual
 from pyiceberg.partitioning import PartitionField, PartitionSpec
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
@@ -92,6 +93,29 @@ FUTURE_OHLCV_SCHEMA = Schema(
 )
 
 
+# (catalog uri, warehouse, table identifier) triples whose metadata was ensured in this process.
+_ENSURED_TABLES: set[tuple[str, str, Identifier]] = set()
+
+
+def symbol_days_filter(nse_symbol: str, trade_dates: list[date]) -> BooleanExpression:
+    """Row filter for one symbol on specific trade dates."""
+
+    if len(trade_dates) == 1:
+        return And(EqualTo("nse_symbol", nse_symbol), EqualTo("trade_date", trade_dates[0]))
+    return And(EqualTo("nse_symbol", nse_symbol), In("trade_date", set(trade_dates)))
+
+
+def symbol_range_filter(nse_symbol: str, from_date: date, to_date: date) -> BooleanExpression:
+    """Row filter for one symbol inside an inclusive date range."""
+
+    if from_date > to_date:
+        raise ValueError(f"from_date {from_date} is after to_date {to_date}")
+    return And(
+        EqualTo("nse_symbol", nse_symbol),
+        And(GreaterThanOrEqual("trade_date", from_date), LessThanOrEqual("trade_date", to_date)),
+    )
+
+
 class IcebergMarketDataCatalog:
     """Create and append to market-data Iceberg tables in R2 Data Catalog."""
 
@@ -116,8 +140,20 @@ class IcebergMarketDataCatalog:
         return table_ids
 
     def ensure_table(self, spec: IcebergTableSpec) -> Table:
-        """Create the namespace/table if needed and return the loaded table."""
+        """Create the namespace/table if needed and return the loaded table.
 
+        Metadata checks run once per process and table; later calls only load
+        the table, which keeps per-symbol uploads from paying ~7s each time.
+        """
+
+        cache_key = (str(self.catalog.properties.get("uri")), str(self.catalog.properties.get("warehouse")), spec.identifier)
+        if cache_key in _ENSURED_TABLES:
+            return self.catalog.load_table(spec.identifier)
+        table = self._ensure_table_uncached(spec)
+        _ENSURED_TABLES.add(cache_key)
+        return table
+
+    def _ensure_table_uncached(self, spec: IcebergTableSpec) -> Table:
         self.catalog.create_namespace_if_not_exists(spec.namespace)
         if not self.catalog.table_exists(spec.identifier):
             return self.catalog.create_table(
@@ -167,6 +203,28 @@ class IcebergMarketDataCatalog:
         arrow_table = pa.concat_tables([pq.read_table(path) for path in paths], promote_options="default")
         table.append(arrow_table, snapshot_properties=snapshot_properties or {})
         return spec.identifier
+
+    def replace_parquet_files(
+        self,
+        market_type: MarketType,
+        paths: list[str | Path],
+        *,
+        nse_symbol: str,
+        trade_dates: Iterable[date],
+        snapshot_properties: dict[str, str] | None = None,
+    ) -> Identifier:
+        """Replace one symbol's trade dates with local Parquet files in one snapshot."""
+
+        if not paths:
+            raise ValueError("paths must not be empty")
+        arrow_table = pa.concat_tables([pq.read_table(path) for path in paths], promote_options="default")
+        return self.replace_symbol_days(
+            market_type,
+            arrow_table,
+            nse_symbol=nse_symbol,
+            trade_dates=trade_dates,
+            snapshot_properties=snapshot_properties,
+        )
 
     def append_arrow_table(
         self,
@@ -218,6 +276,55 @@ class IcebergMarketDataCatalog:
             arrow_table,
             overwrite_filter=overwrite_filter,
             snapshot_properties=snapshot_properties or {},
+        )
+        return spec.identifier
+
+    def replace_symbol_days(
+        self,
+        market_type: MarketType,
+        arrow_table: pa.Table,
+        *,
+        nse_symbol: str,
+        trade_dates: Iterable[date],
+        snapshot_properties: dict[str, str] | None = None,
+    ) -> Identifier:
+        """Delete then insert the given symbol/days in one snapshot.
+
+        Retrying the same call leaves exactly one copy of each candle, unlike append.
+        """
+
+        dates = sorted(set(trade_dates))
+        if not dates:
+            raise ValueError("trade_dates must not be empty")
+        return self._overwrite(market_type, arrow_table, symbol_days_filter(nse_symbol, dates), snapshot_properties)
+
+    def replace_symbol_range(
+        self,
+        market_type: MarketType,
+        arrow_table: pa.Table,
+        *,
+        nse_symbol: str,
+        from_date: date,
+        to_date: date,
+        snapshot_properties: dict[str, str] | None = None,
+    ) -> Identifier:
+        """Replace every row of one symbol inside an inclusive date range."""
+
+        return self._overwrite(market_type, arrow_table, symbol_range_filter(nse_symbol, from_date, to_date), snapshot_properties)
+
+    def _overwrite(
+        self,
+        market_type: MarketType,
+        arrow_table: pa.Table,
+        overwrite_filter: BooleanExpression,
+        snapshot_properties: dict[str, str] | None,
+    ) -> Identifier:
+        spec = self._table_spec(market_type)
+        table = self.ensure_table(spec)
+        table.overwrite(
+            arrow_table,
+            overwrite_filter=overwrite_filter,
+            snapshot_properties={"tick_ticker.write_mode": "replace"} | (snapshot_properties or {}),
         )
         return spec.identifier
 

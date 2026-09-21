@@ -1,0 +1,6 @@
+source_id,kind,location,sha256,description
+nifty50_basket_csv,file,extra/NIFTY50_historical_baskets_2015_2026.csv,321c17a38a96a054be0918905dcbd730aa3e14775034008ea8743b8ae880374d,"Original basket snapshots received 2026-09; superseded by index_membership.csv (LUPIN date wrong, three demerger placeholders missing)"
+niftyindices_press_releases,url,https://www.niftyindices.com/Press_Release/,,"NSE Indices press releases for every NIFTY 50 change; exact PDF per membership row"
+nse_symbolchange,url,https://nsearchives.nseindia.com/content/equities/symbolchange.csv,,"NSE symbol change history (renames)"
+nse_equity_list,url,https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv,,"NSE listed equities: current symbol, ISIN, date of listing"
+provider_probes_20260921,probe,repair-cash-data / manual Upstox and Breeze probes,,"Provider availability checks recorded in provider_mappings.csv"

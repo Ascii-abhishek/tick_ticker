@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     cash_exchange_code: str = "NSE"
     cash_product_type: str = "cash"
     cash_history_chunk_days: int = 1
+    cash_history_sessions_per_request: int = 2
+    cash_history_use_session_calendar: bool = True
     cash_symbol_workers: int = 1
     cash_download_workers: int = 1
     cash_upload_workers: int = 1

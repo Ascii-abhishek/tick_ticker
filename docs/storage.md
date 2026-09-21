@@ -82,6 +82,9 @@ Local partitioning:
 
 Notes:
 
+- `NIFTY` rows: `volume` holds the synthetic index volume for days marked published in D1 `index_volume_state`, and 0 otherwise. See [synthetic index volume](market/synthetic-index-volume.md).
+- Files replaced by `repair-cash-data` are kept under `data/_superseded/<run>/`.
+
 - Breeze code is not stored in cash Parquet.
 - NSE symbol is the analytics symbol.
 - Local manifest files are for resume safety only.

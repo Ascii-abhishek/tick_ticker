@@ -71,8 +71,12 @@ class MarketDataSyncStateRepository:
             return None
         return MarketDataSyncState.model_validate(rows[0])
 
-    def due_cash_symbols(self, *, target_to_date: date, limit: int | None = None) -> list[EquitySymbolReference]:
-        """Return cash symbols needing work through target_to_date."""
+    def due_cash_symbols(self, *, target_to_date: date, limit: int | None = None, synced_only: bool = False) -> list[EquitySymbolReference]:
+        """Return cash symbols needing work through target_to_date.
+
+        synced_only skips symbols that were never synced, so a daily run spends
+        its request budget on keeping existing symbols current.
+        """
 
         sql = """
             SELECT
@@ -86,12 +90,15 @@ class MarketDataSyncStateRepository:
                 ON state.market_type = 'cash'
                 AND state.nse_symbol = refs.nse_symbol
             WHERE
-                state.nse_symbol IS NULL
-                OR state.status != 'completed'
-                OR state.to_date IS NULL
-                OR state.to_date < ?
+                (
+                    state.nse_symbol IS NULL
+                    OR state.status != 'completed'
+                    OR state.to_date IS NULL
+                    OR state.to_date < ?
+                )
+                {synced_filter}
             ORDER BY refs.nse_symbol
-        """
+        """.format(synced_filter="AND state.nse_symbol IS NOT NULL" if synced_only else "")
         params: list[str | int] = [target_to_date.isoformat()]
         if limit is not None:
             sql += "\n            LIMIT ?"
