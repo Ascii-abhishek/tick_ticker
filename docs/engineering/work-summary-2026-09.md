@@ -59,8 +59,9 @@ The data team's notes (Tejasvi) all match the verified facts:
 - **NESTLEIND** 2022-01..2023-07 fetched and published (391 sessions).
 - **Gap repair from 2022:** 50 symbols, 92 requests, every gap filled.
 - **TMCV and ITCHOTELS** synced from listing.
-- **Forward sync:** every synced symbol (and NIFTY) is current to **2026-09-18**, the last session Upstox had fully published at run time. The previous trailing-session gaps (8 symbols) were repaired. 2026-09-21 was still arriving overnight (14 symbols had it, NIFTY did not). The next cron run picks it up through the NIFTY probe.
-- **NIFTY volume published for 791 complete days (2023-07-13..2026-09-18)**, locally and in Iceberg; verified with no duplicate rows. The 1,833 earlier days are recorded as `partial` in D1 with their missing members: all of 2016–2021 (Breeze backfill pending), plus 2022-01-03..2023-07-12, where HDFC is the only missing member. Cross-check: 2026-09-02 09:15 = 375,192, matching the independent estimate in the reviewed analysis.
+- **Forward sync:** every symbol (and NIFTY) is current to **2026-09-21**. A full re-audit over 2022-01-03..2026-09-21 (1,170 sessions, 134 symbols) reports zero gaps.
+- **All 2022+ data now comes from Upstox on one adjustment basis:** the 13 mixed symbols plus a further 25 Breeze-sourced non-index symbols were re-fetched and republished.
+- **NIFTY volume published for 792 complete days (2023-07-13..2026-09-21)**, locally and in Iceberg; verified with no duplicate rows. The 1,833 earlier days are recorded as `partial` in D1 with their missing members: all of 2016–2021 (Breeze backfill pending), plus 2022-01-03..2023-07-12, where HDFC is the only missing member. Cross-check: 2026-09-02 09:15 = 375,192, matching the independent estimate in the reviewed analysis.
 
 ## Still open
 
@@ -69,6 +70,7 @@ The data team's notes (Tejasvi) all match the verified facts:
 | 2016–2021 constituents and HDFC (to 2023-07-12) | Needs Breeze; the session token had expired. About 36.7k requests, 8–9 days of quota. | [historical backfill](historical-backfill.md) |
 | Breeze codes for delisted or renamed names | Not verifiable without a session | First backfill run; update `provider_mappings.csv` |
 | Cron credentials | Upstox and Breeze tokens expire daily | Automate the token refresh, or refresh before 06:30 IST |
+| Scheduler is a macOS launchd agent | `crontab` needs Full Disk Access; the Mac must be awake at 06:30 | Move to a server or keep the Mac awake ([daily cron](daily-cron.md)) |
 | 1-second path (`sync-cash-second-data`) still appends | Out of scope (1-minute focus) | Port it to `replace_symbol_days("cash_1s", …)` |
 | Storage-symbol procedure on future renames | Fetchers use the D1 current symbol | Follow the [rename procedure](decisions.md#storage-symbol-is-fixed-per-security) |
 | Mixed adjustment basis in raw prices | Providers adjust at fetch time | Use `corporate_action` for return series; re-fetch symbols after splits if needed |

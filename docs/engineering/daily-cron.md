@@ -5,12 +5,29 @@ Part of the [knowledge base](../README.md). See also:
 
 Script: [`scripts/daily_cash_sync.sh`](../../scripts/daily_cash_sync.sh)
 
-```cron
-# 06:30 IST, Monday–Saturday (Saturday catches Friday + any special session)
-30 6 * * 1-6  cd /path/to/tick_ticker && scripts/daily_cash_sync.sh
+On this Mac the schedule runs as a **launchd agent**, because `crontab` needs
+Full Disk Access on macOS and fails with "Operation not permitted" without it:
+
+```bash
+cp scripts/com.tickticker.daily-cash-sync.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tickticker.daily-cash-sync.plist
+launchctl print gui/$(id -u)/com.tickticker.daily-cash-sync   # state, runs, last exit
+launchctl kickstart -k gui/$(id -u)/com.tickticker.daily-cash-sync   # run once now
+launchctl bootout gui/$(id -u)/com.tickticker.daily-cash-sync        # disable
 ```
 
-The cron's time zone must be IST, or convert the time. The script's own date
+It fires at **06:30 local time, Monday–Saturday** (Saturday catches Friday and
+any special session). The Mac must be awake; launchd runs a missed job once the
+machine wakes. Output goes to `logs/launchd_daily_cash_sync.log` plus the
+script's own `logs/daily_cash_sync_<timestamp>.log`.
+
+On a Linux box or a server, use cron instead:
+
+```cron
+30 6 * * 1-6  cd /path/to/tick_ticker && scripts/daily_cash_sync.sh >> logs/cron.log 2>&1
+```
+
+The schedule's time zone must be IST, or convert the time. The script's own date
 logic is in IST whatever the machine clock is set to.
 
 ## What it runs

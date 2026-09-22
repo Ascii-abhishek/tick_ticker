@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tickticker.daily-cash-sync</string>
+
+    <!-- Daily NSE cash 1-minute sync + NIFTY 50 synthetic volume.
+         Everything stops at the last completed session (yesterday IST), so a
+         missed run is caught by the next one. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>cd /Users/abhishekpathak/projects/personal/tick_ticker &amp;&amp; ./scripts/daily_cash_sync.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/abhishekpathak/projects/personal/tick_ticker</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- 06:30 local time, Monday (1) to Saturday (6). -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+    </array>
+
+    <!-- If the Mac was asleep at 06:30, run once after it wakes. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/abhishekpathak/projects/personal/tick_ticker/logs/launchd_daily_cash_sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/abhishekpathak/projects/personal/tick_ticker/logs/launchd_daily_cash_sync.log</string>
+</dict>
+</plist>

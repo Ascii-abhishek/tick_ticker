@@ -82,11 +82,13 @@ further step existed where Breeze data ends and Upstox begins (2026-07-27, and
 **Fixed:** all 13 re-fetched from Upstox for 2022-01-01..2026-09-04 and
 republished; the old files are in `data/_superseded/20260921T182813/`.
 
-**Still Breeze-sourced in 2022+, none of them in NIFTY 50** (so index volume is
-unaffected): 360ONE, 3MINDIA, AADHARHFC, AARTIIND, AAVAS, ABB, ABBOTINDIA,
-ABCAPITAL, ABDL, ABLBL, ABSLAMC, ACMESOLAR, ACUTAAS, AEGISVOPAK, AFCONS, AIIL,
-ANANDRATHI, ANGELONE, ANTHEM, ANURAS, ATHERENERG, CANHLIFE, CPPLUS, EMMVEE,
-TENNIND.
+A further 25 symbols were Breeze-sourced in 2022+, none of them in NIFTY 50
+(360ONE, 3MINDIA, AADHARHFC, AARTIIND, AAVAS, ABB, ABBOTINDIA, ABCAPITAL, ABDL,
+ABLBL, ABSLAMC, ACMESOLAR, ACUTAAS, AEGISVOPAK, AFCONS, AIIL, ANANDRATHI,
+ANGELONE, ANTHEM, ANURAS, ATHERENERG, CANHLIFE, CPPLUS, EMMVEE, TENNIND). They
+were re-fetched from Upstox for 2022-01-01..2026-09-21 as well, so **no
+Breeze-sourced day remains in the 2022+ data** (verified: no pre-open candles on
+sampled days across 2022–2026).
 
 **Synthetic volume was never affected**: it uses price × volume, which is
 invariant to the adjustment basis, and it reads the local daily files, which
@@ -113,6 +115,8 @@ with gaps.
 | 2026-06-25 | TENNIND | single failed request |
 
 All of these are filled. The repair logged no day where Upstox had no candles.
+A re-audit on 2026-09-23 over 2022-01-03..2026-09-21 (1,170 sessions, all 134
+symbols) reports **zero gaps**.
 
 ### 3. What period of NESTLEIND was missing?
 
