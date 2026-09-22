@@ -66,7 +66,7 @@ The validator rejects:
 
 It warns when a basket does not add up to 50 companies once DVRs and placeholders are allowed for.
 
-Common edits:
+Common edits (step by step in the [index change runbook](index-change-runbook.md)):
 
 | Event | Edit |
 |---|---|

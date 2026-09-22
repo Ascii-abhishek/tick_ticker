@@ -26,6 +26,7 @@ For what changed in September 2026 and what is still open, read
 | [D1 reference schema](engineering/d1-reference-schema.md) | Tables for identity, membership, provider mappings and volume state; how to update them |
 | [Index volume pipeline](engineering/index-volume-pipeline.md) | `generate-index-volume`: inputs, completeness rules, publishing, recompute triggers |
 | [Data quality audit, 2026-09](engineering/data-quality-audit-2026-09.md) | Problems found in the existing data, their root causes, and the fixes applied |
+| [Runbook: index constituent change](engineering/index-change-runbook.md) | What to edit when NSE adds, drops, renames or demerges a NIFTY 50 constituent |
 | [Daily cron](engineering/daily-cron.md) | The scheduled job, credentials and failure handling |
 | [Historical backfill](engineering/historical-backfill.md) | Getting 2016–2021 constituents and HDFC from Breeze; request estimates |
 | [Decision log](engineering/decisions.md) | Choices made, the alternatives, and their merits and drawbacks |

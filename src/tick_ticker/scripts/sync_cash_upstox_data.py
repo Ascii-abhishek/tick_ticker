@@ -37,7 +37,7 @@ from tick_ticker.services.cash_data import (
     write_cash_parquet,
 )
 from tick_ticker.services.cash_history_provider import cash_provider_history_start_date
-from tick_ticker.utils.datetime import parse_date, utc_now
+from tick_ticker.utils.datetime import last_completed_session_bound, parse_date, utc_now
 from tick_ticker.utils.engines import UpstoxClient, create_d1_client, create_upstox_client
 from tick_ticker.utils.logging import configure_logging, get_logger
 
@@ -85,6 +85,18 @@ class UpstoxFetchChunk:
     from_date: date
     to_date: date
     marker_path: Path
+
+    def already_fetched(self, fetched: set[str], *, bound: date | None = None) -> bool:
+        """Whether this chunk can be skipped.
+
+        A chunk is only settled once its last day has elapsed. Upstox publishes a
+        session during the night after it, so a chunk covering recent days is
+        re-requested; existing non-empty daily files are kept either way.
+        """
+
+        if self.to_date >= (bound or last_completed_session_bound()):
+            return False
+        return str(self.marker_path) in fetched or self.marker_path.exists()
 
 
 def main() -> None:
@@ -317,7 +329,10 @@ def sync_cash_symbol(
             cash_table_id = upload_to_iceberg(settings, manifest, manifest_path, workers=upload_workers, batch_size=upload_batch_size)
             local_coverage = cash_local_coverage(settings.data_dir, symbol.nse_symbol)
             coverage_start = local_coverage.from_date or coverage_from_date(sync_state, from_date)
-            coverage_end = local_coverage.to_date if local_coverage.to_date and local_coverage.to_date > to_date else to_date
+            # Never record a to_date beyond the last day actually stored: the
+            # provider may publish a session late, and a to_date ahead of the
+            # data makes the next run start after the gap.
+            coverage_end = local_coverage.to_date or to_date
             completed_at = utc_now()
             manifest.record_upload_event(
                 table=cash_table_id,
@@ -520,7 +535,7 @@ def count_missing_upstox_fetch_requests(
     fetched = set(manifest.fetched_files)
     requests = 0
     for chunk in iter_upstox_fetch_chunks(settings.data_dir, symbol.nse_symbol, from_date, to_date):
-        if str(chunk.marker_path) in fetched or chunk.marker_path.exists():
+        if chunk.already_fetched(fetched):
             continue
         requests += 1
     return requests
@@ -569,7 +584,7 @@ def fetch_cash_chunk(
 ) -> CashFetchResult:
     """Fetch one Upstox monthly chunk into daily local parquet files."""
 
-    if str(chunk.marker_path) in fetched or chunk.marker_path.exists():
+    if chunk.already_fetched(fetched):
         # A chunk marker represents all of its daily files. Preserve those paths
         # when rebuilding a manifest for a new range, so later uploads see them.
         local_files = []

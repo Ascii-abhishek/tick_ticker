@@ -264,3 +264,17 @@ def test_ignore_listing_date_clamps_only_to_provider_floor() -> None:
     symbol = EquitySymbolReference(nse_symbol="NESTLEIND", breeze_code="NESIND", listing_date=date(2023, 8, 1))
 
     assert resolve_upstox_from_date(symbol, None, Settings(_env_file=None), args) == date(2022, 1, 1)
+
+
+def test_chunk_is_not_settled_until_its_last_day_has_elapsed(tmp_path) -> None:
+    from tick_ticker.scripts.sync_cash_upstox_data import UpstoxFetchChunk
+
+    marker = cash_local_path(tmp_path, date(2026, 9, 1), "ACC")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    current = UpstoxFetchChunk(from_date=date(2026, 9, 1), to_date=date(2026, 9, 30), marker_path=marker)
+    past = UpstoxFetchChunk(from_date=date(2026, 8, 1), to_date=date(2026, 8, 31), marker_path=marker)
+
+    # bound = last completed session: the September chunk still has days to come.
+    assert current.already_fetched(set(), bound=date(2026, 9, 21)) is False
+    assert past.already_fetched(set(), bound=date(2026, 9, 21)) is True
